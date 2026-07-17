@@ -129,12 +129,10 @@ class TelegramCompanion:
             return await self._handle_search(query)
 
         else:
-            # Natural dialog/fallback
-            return (
-                f"I received your message: \"{text_clean}\".\n"
-                "As your autonomous agent, I am monitoring your mission in the background. "
-                "Type `/help` to see a full list of commands."
-            )
+            # Natural dialog/fallback -> route to conversational engine!
+            from shadow.core.runtime import conversation_engine
+            reply = await conversation_engine.chat(text_clean, session_id="telegram_companion")
+            return reply
 
     async def _handle_today(self) -> str:
         conn = get_db_connection()

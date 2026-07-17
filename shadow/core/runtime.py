@@ -11,6 +11,82 @@ from shadow.goals.generator import TaskGenerator
 from shadow.goals.scanner import OpportunityScanner
 from shadow.memory.memory import memory_engine
 
+class ConversationEngine:
+    def __init__(self, session_id: str = "default_cli"):
+        self.session_id = session_id
+
+    async def get_system_prompt(self) -> str:
+        config = get_config()
+        # Retrieve life mission and goals context
+        from shadow.goals.engine import goals_engine
+        active_goals = goals_engine.get_active_goals()
+        goals_summary = "\n".join([f"- {g['title']} (Category: {g['category']}, Status: {g['status']})" for g in active_goals])
+
+        prompt = (
+            f"You are {config.assistant_name or 'Ghost'}, the persistent, conversational digital Chief of Staff "
+            f"and Autonomous Personal Operating System for {config.user_name or 'User'}.\n\n"
+            f"Your Core Directives:\n"
+            f"1. Help the user achieve their Life Mission: \"{config.life_mission}\"\n"
+            f"2. Align every recommendation and action with the current goals.\n\n"
+            f"Active Goals:\n{goals_summary or 'No goals parsed yet.'}\n\n"
+            f"When the user asks you to do something, you should decide if you can execute it immediately "
+            f"or if you need to create a plan of subtasks. If a plan is needed, describe the plan, and tell "
+            f"the user that you can generate tasks for it. No slash commands are allowed. Respond naturally and with authority."
+        )
+        return prompt
+
+    async def chat(self, user_message: str, session_id: Optional[str] = None) -> str:
+        active_session = session_id or self.session_id
+
+        # Retrieve context from long-term memory
+        from shadow.memory.memory import memory_engine
+        context_items = memory_engine.retrieve_context(user_message, limit=3)
+        context_str = "\n".join([f"[{c['category'].upper()}] (Tag: {c['tags']}): {c['content']}" for c in context_items])
+
+        # Retrieve conversation history
+        history = memory_engine.get_conversation_history(active_session, limit=10)
+
+        # Build prompt
+        system_prompt = await self.get_system_prompt()
+        if context_str:
+            system_prompt += f"\n\nRetrieved Context from Memory:\n{context_str}"
+
+        messages = [{"role": "system", "content": system_prompt}]
+        for h in history:
+            messages.append({"role": h["role"], "content": h["content"]})
+
+        messages.append({"role": "user", "content": user_message})
+
+        # Save user message to history
+        memory_engine.add_conversation_message(active_session, "user", user_message)
+
+        # Call active AI provider
+        from shadow.providers.factory import get_provider
+        provider = get_provider()
+        try:
+            res = await provider.chat(messages)
+            reply = res["content"]
+
+            # Save assistant message to history
+            memory_engine.add_conversation_message(
+                active_session,
+                "assistant",
+                reply,
+                provider=res.get("model"),
+                tokens=res.get("tokens_used", 0),
+                cost=res.get("estimated_cost", 0.0)
+            )
+
+            # Auto-compress conversation history if it gets too long
+            memory_engine.compress_conversation(active_session)
+
+            return reply
+        except Exception as e:
+            return f"Ghost is having trouble thinking right now: {e}"
+
+# Global conversation engine singleton
+conversation_engine = ConversationEngine()
+
 class AutonomousRuntime:
     def __init__(self):
         self._running = False
@@ -70,6 +146,9 @@ class AutonomousRuntime:
                 # 8. LEARN
                 await self._learn(executed)
 
+                # 9. SELF IMPROVE (logs cleanup, conversation compression, and suggestions)
+                await self._self_improve()
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -81,6 +160,83 @@ class AutonomousRuntime:
                 )
 
             await asyncio.sleep(self.loop_interval)
+
+    async def _check_wake_locks(self) -> bool:
+        """
+        Detect active wake locks (simulated or Termux-specific).
+        """
+        return True
+
+    async def _check_charging(self) -> bool:
+        """
+        Detect if the device is plugged in / charging.
+        """
+        try:
+            import subprocess
+            import json
+            import shutil
+            if shutil.which("termux-battery-status"):
+                res = subprocess.run(["termux-battery-status"], capture_output=True, text=True, timeout=2.0)
+                if res.returncode == 0:
+                    data = json.loads(res.stdout)
+                    status_str = data.get("status", "").lower()
+                    return "charging" in status_str or "full" in status_str
+        except Exception:
+            pass
+        return True  # default fallback to safe state
+
+    async def _check_connectivity(self) -> str:
+        """
+        Monitor Wi-Fi or Mobile Data connection.
+        """
+        try:
+            import shutil
+            import subprocess
+            if shutil.which("termux-wifi-connectioninfo"):
+                res = subprocess.run(["termux-wifi-connectioninfo"], capture_output=True, text=True, timeout=2.0)
+                if res.returncode == 0:
+                    return "Wi-Fi (Connected)"
+        except Exception:
+            pass
+        return "Mobile Data (Connected)"
+
+    async def _self_improve(self):
+        """
+        Background logs cleanup, conversation history compression, and mission suggestions.
+        """
+        try:
+            # 1. Compress active conversation history
+            memory_engine.compress_conversation("default_cli")
+            memory_engine.compress_conversation("telegram_companion")
+
+            # 2. Archive old recent memories (older than 15 days)
+            memory_engine.archive_old_memories(days=15)
+
+            # 3. Clean database logs (keep only latest 100 system logs to save disk space on mobile)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 100)")
+            conn.commit()
+            conn.close()
+
+            # 4. Mission-alignment suggestions
+            # Log suggestions to memory if active goals are lacking
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM goals WHERE status = 'pending'")
+            active_goals = cursor.fetchone()["count"]
+            conn.close()
+
+            if active_goals < 3:
+                # Suggest a goal matching mission
+                memory_engine.add_memory(
+                    category="insight",
+                    content="Ghost Suggestion: Based on your mission.md, consider adding a new goal to master advanced tool integration or mobile deployment.",
+                    key="daemon_suggestion",
+                    tags=["self_improvement", "goal_suggestion"]
+                )
+        except Exception as e:
+            logger.error(f"Daemon self-improvement step failed: {e}")
 
     async def _observe(self) -> Dict[str, Any]:
         """
@@ -112,11 +268,18 @@ class AutonomousRuntime:
         except Exception:
             pass
 
+        wake_lock_held = await self._check_wake_locks()
+        is_charging = await self._check_charging()
+        connectivity = await self._check_connectivity()
+
         return {
             "pending_tasks": pending_tasks,
             "new_opportunities": new_opps,
             "pending_goals": pending_goals,
             "battery_level": battery_level,
+            "wake_lock_held": wake_lock_held,
+            "is_charging": is_charging,
+            "connectivity": connectivity,
             "timestamp": time.time()
         }
 

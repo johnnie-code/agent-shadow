@@ -81,3 +81,66 @@ class TaskGenerator:
                 error=str(e)
             )
             return []
+
+    async def generate_tasks_from_natural_language(self, user_intent: str) -> List[Dict[str, Any]]:
+        """
+        Takes a raw user conversational input and dynamically structures it into multiple subtasks,
+        milestones, dependencies, priority scores, and safety levels.
+        """
+        prompt = (
+            "You are the Planning Engine Agent for PROJECT SHADOW. Your task is to break down the "
+            "following complex user intent into a structured list of actionable, logical subtasks/milestones.\n"
+            f"User Intent: \"{user_intent}\"\n\n"
+            "Define milestones/subtasks with the following parameters:\n"
+            "- safety_level: 0 (read-only research/planning), 1 (local file writing), 2 (remote execution/approval required)\n"
+            "- priority_score: 1.0 to 10.0 (where higher is more critical)\n"
+            "- estimated_completion: short description (e.g. '1 hour', '2 days')\n"
+            "- dependencies: titles of any preceding tasks in the list\n\n"
+            "Respond ONLY with a valid JSON object matching this schema:\n"
+            "{\n"
+            '  "tasks": [\n'
+            "    {\n"
+            '      "title": "Subtask Title",\n'
+            '      "description": "Short action instruction",\n'
+            '      "category": "Research" | "Coding" | "Documentation" | "Deployment",\n'
+            '      "safety_level": 0 | 1 | 2,\n'
+            '      "priority_score": 8.5,\n'
+            '      "estimated_completion": "30 mins",\n'
+            '      "dependencies": ""\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+
+        try:
+            res = await self.provider.chat([{"role": "system", "content": prompt}])
+            data = json.loads(res["content"])
+            tasks = data.get("tasks", [])
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            saved_count = 0
+            for task in tasks:
+                cursor.execute("""
+                    INSERT INTO tasks (title, description, category, safety_level, priority_score, status)
+                    VALUES (?, ?, ?, ?, ?, 'pending')
+                """, (task["title"], task["description"], task["category"], task["safety_level"], task["priority_score"]))
+                saved_count += 1
+            conn.commit()
+            conn.close()
+
+            log_decision(
+                level="INFO",
+                action="Conversational planning executed",
+                reasoning=f"Simple intent '{user_intent}' was parsed and planned into subtasks.",
+                result=f"Tasks generated and saved to database: {saved_count}"
+            )
+            return tasks
+        except Exception as e:
+            log_decision(
+                level="ERROR",
+                action="Conversational planning failed",
+                reasoning=f"Could not convert intent '{user_intent}' to tasks.",
+                error=str(e)
+            )
+            return []

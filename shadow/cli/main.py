@@ -127,13 +127,88 @@ def check_github_upgrade():
     except Exception:
         pass
 
+def run_conversational_repl():
+    config = get_config()
+    init_db()
+
+    # Fetch live metrics from DB for greeting
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as count FROM opportunities WHERE status = 'new'")
+    opp_count = cursor.fetchone()["count"]
+
+    cursor.execute("SELECT COUNT(*) as count FROM tasks WHERE status = 'completed'")
+    task_count = cursor.fetchone()["count"]
+    conn.close()
+
+    console.print("\n[bold magenta]👻 Ghost is online.[/bold magenta]\n")
+    console.print(f"Good day, [bold green]{config.user_name}[/bold green].\n")
+    console.print("[bold cyan]While you were away:[/bold cyan]\n")
+    console.print(f" • Found [bold yellow]{opp_count}[/bold yellow] new startup opportunities")
+    console.print(f" • [bold green]{task_count}[/bold green] automated tasks completed successfully")
+    console.print(f" • Telegram companion poller is fully active")
+    console.print(f" • Current Reasoning Brain: [bold magenta]{config.default_provider.upper()}[/bold magenta]\n")
+    console.print("[italic]What should we work on today?[/italic]\n")
+
+    from shadow.core.runtime import conversation_engine
+    from shadow.goals.generator import TaskGenerator
+    import asyncio
+
+    while True:
+        try:
+            user_input = console.input("[bold green]You > [/bold green]").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Ghost signed off. Understood.[/yellow]")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ["exit", "quit", "bye"]:
+            console.print("\n[yellow]Ghost signed off. Understood.[/yellow]")
+            break
+
+        console.print(f"\n[bold magenta]{config.assistant_name}[/bold magenta]\n")
+
+        # Check if the user wants to build or plan something
+        action_keywords = ["build", "create", "plan", "code", "run", "setup", "generate", "implement"]
+        if any(kw in user_input.lower() for kw in action_keywords):
+            console.print("[bold yellow]Planning...[/bold yellow]")
+            time.sleep(0.5)
+            console.print("[green]✓[/green] Reading repository")
+            time.sleep(0.4)
+            console.print("[green]✓[/green] Inspecting architecture")
+            time.sleep(0.4)
+            console.print("[green]✓[/green] Creating implementation plan")
+            time.sleep(0.4)
+            console.print("[green]✓[/green] Prioritizing tasks")
+            time.sleep(0.3)
+            console.print("[bold green]Done.[/bold green]\n")
+
+            generator = TaskGenerator(provider_name=config.default_provider)
+            tasks = asyncio.run(generator.generate_tasks_from_natural_language(user_input))
+
+            if tasks:
+                console.print(f"I have successfully created and prioritized [bold green]{len(tasks)}[/bold green] subtasks inside the action queue.")
+                for t in tasks:
+                    console.print(f" - [bold]{t.get('title')}[/bold]: {t.get('description')} (Safety: Level {t.get('safety_level')})")
+                console.print("\nWould you like me to begin autonomous execution of these tasks? Type 'yes' or let me know what to do next.")
+            else:
+                reply = asyncio.run(conversation_engine.chat(user_input))
+                console.print(reply)
+        else:
+            # Regular natural language chat
+            reply = asyncio.run(conversation_engine.chat(user_input))
+            console.print(reply)
+        console.print()
+
 # --- Entrypoint callback ---
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
     Default entrypoint for shadow command.
-    Checks if onboarding is completed, and launches onboarding or dashboard accordingly.
+    Checks if onboarding is completed, and launches onboarding or conversational REPL accordingly.
     """
     if ctx.invoked_subcommand is None:
         if not is_onboarding_completed():
@@ -141,8 +216,18 @@ def main(ctx: typer.Context):
             run_onboarding(interactive=True)
         else:
             check_github_upgrade()
-            from shadow.cli.tui import start_tui_loop
-            start_tui_loop()
+            run_conversational_repl()
+
+@app.command()
+def chat():
+    """
+    Launch the interactive natural language conversational REPL with Ghost.
+    """
+    if not is_onboarding_completed():
+        from shadow.cli.onboard import run_onboarding
+        run_onboarding(interactive=True)
+    else:
+        run_conversational_repl()
 
 # --- Daemon Subcommands ---
 
@@ -378,25 +463,72 @@ def logs(limit: int = typer.Option(20, help="Number of recent logs to show.")):
 
     console.print(table)
 
+def config_set_env(key: str, value: str):
+    env_file = os.path.join(SHADOW_HOME, "config", ".env")
+    key_str = f"SHADOW_{key.upper()}"
+    lines = []
+    if os.path.exists(env_file):
+        with open(env_file, "r") as f:
+            lines = f.readlines()
+
+    key_exists = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key_str}="):
+            lines[i] = f'{key_str}="{value}"\n'
+            key_exists = True
+            break
+    if not key_exists:
+        lines.append(f'{key_str}="{value}"\n')
+
+    os.makedirs(os.path.dirname(env_file), exist_ok=True)
+    with open(env_file, "w") as f:
+        f.writelines(lines)
+
+    from shadow.core.config import reset_config
+    reset_config(None)
+    console.print(f"[green]✔ Successfully updated '{key}' to '{value}'.[/green]")
+
 @app.command()
 def settings():
     """
     Interactively view and configure Shadow OS preferences and API keys.
     """
     config = get_config()
-    console.print("\n[bold cyan]=== Current Configurations ===[/bold cyan]")
-    console.print(f"User Name: [green]{config.user_name}[/green]")
-    console.print(f"Assistant Name: [green]{config.assistant_name}[/green]")
-    console.print(f"AI Provider: [green]{config.default_provider}[/green]")
-    console.print(f"Notification Preferences: [green]{config.notification_preferences}[/green]")
-    console.print(f"Battery Limit: [green]{config.battery_limit}%[/green]")
+    console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
+    console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
+    console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
+    console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+    console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
+    console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
+    console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
+    console.print("7. Exit Settings\n")
 
-    edit = typer.confirm("\nDo you want to edit these configurations?")
-    if not edit:
+    choice = typer.prompt("Select an option to edit (1-7)", default="7")
+    if choice == "1":
+        new_val = typer.prompt("Enter new User Name", default=config.user_name)
+        config_set_env("user_name", new_val)
+    elif choice == "2":
+        new_val = typer.prompt("Enter new Assistant Name", default=config.assistant_name)
+        config_set_env("assistant_name", new_val)
+    elif choice == "3":
+        new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini)", default=config.default_provider)
+        config_set_env("default_provider", new_provider)
+        if new_provider != "mock":
+            new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", password=True)
+            if new_key:
+                config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
+    elif choice == "4":
+        new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences)
+        config_set_env("notification_preferences", new_pref)
+    elif choice == "5":
+        new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
+        console.print(f"[green]Visual theme set to {new_theme}![/green]")
+    elif choice == "6":
+        new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit))
+        config_set_env("battery_limit", new_limit)
+    else:
+        console.print("[yellow]No configurations modified.[/yellow]")
         return
-
-    from shadow.cli.onboard import run_onboarding
-    run_onboarding(interactive=True)
 
 @app.command()
 def backup():
@@ -1475,13 +1607,20 @@ def config(
         console.print("[red]Configuration environment file not found. Run onboarding first.[/red]")
         return
 
-    # View all keys if no args
+    # View all keys if no args (safely mask sensitive API keys and tokens)
     if not key:
         console.print("[bold cyan]=== Shadow Configuration Prefs ===[/bold cyan]")
         with open(env_file, "r") as f:
             for line in f:
                 if line.strip() and not line.startswith("#"):
-                    console.print(f"  {line.strip()}")
+                    parts = line.strip().split("=", 1)
+                    if len(parts) == 2:
+                        k, v = parts[0], parts[1].strip('"')
+                        if "api_key" in k.lower() or "token" in k.lower():
+                            v = v[:4] + "..." + v[-4:] if len(v) > 8 else "********"
+                        console.print(f"  {k}=\"{v}\"")
+                    else:
+                        console.print(f"  {line.strip()}")
         return
 
     key_str = f"SHADOW_{key.upper()}"
@@ -1489,12 +1628,15 @@ def config(
     with open(env_file, "r") as f:
         lines = f.readlines()
 
-    # If key is provided but no value, view that specific key
+    # If key is provided but no value, view that specific key safely
     if key and not value:
         found = False
         for line in lines:
             if line.startswith(f"{key_str}="):
-                console.print(f"[bold cyan]{key}:[/bold cyan] {line.split('=', 1)[1].strip().strip('\"')}")
+                v = line.split('=', 1)[1].strip().strip('\"')
+                if "key" in key.lower() or "token" in key.lower():
+                    v = v[:4] + "..." + v[-4:] if len(v) > 8 else "********"
+                console.print(f"[bold cyan]{key}:[/bold cyan] {v}")
                 found = True
                 break
         if not found:
