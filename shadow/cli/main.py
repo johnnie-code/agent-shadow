@@ -1129,28 +1129,31 @@ async def test_claude_connectivity():
 
 async def test_ollama_connectivity():
     import httpx
-    url = os.environ.get("SHADOW_OLLAMA_API_BASE") or "http://localhost:11434"
+    config = get_config()
+    url = config.ollama.api_base or "http://localhost:11434"
+    if config.ollama.mode == "cloud":
+        url = "http://localhost:11434"
     tags_url = f"{url.rstrip('/')}/api/tags"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(tags_url, timeout=3.0)
             if resp.status_code == 200:
-                console.print("[green]✓ Ollama[/green]: Connected")
+                console.print("[green]✓ Ollama Local[/green]: Connected")
             else:
-                console.print(f"[red]✗ Ollama[/red]: Error (Status {resp.status_code})")
-    except Exception:
-        console.print(f"[red]✗ Ollama[/red]: Error (Could not connect to local Ollama instance at {url})")
+                console.print(f"[red]✗ Ollama Local[/red]: Error (Status {resp.status_code})")
+    except Exception as e:
+        console.print(f"[red]✗ Ollama Local[/red]: Error (Could not connect to local Ollama instance at {url}: {e})")
 
 async def test_ollama_cloud_connectivity():
     import httpx
-    url = os.environ.get("SHADOW_OLLAMA_CLOUD_URL")
-    if not url:
-        console.print("[red]✗ Ollama Cloud[/red]: Error (Not Configured: SHADOW_OLLAMA_CLOUD_URL is missing)")
-        return
+    config = get_config()
+    url = config.ollama.api_base or "https://ollama.com/api"
+    if config.ollama.mode == "local":
+        url = "https://ollama.com/api"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=3.0)
-            if resp.status_code in (200, 401, 403):
+            if resp.status_code in (200, 401, 403, 404):
                 console.print("[green]✓ Ollama Cloud[/green]: Connected")
             else:
                 console.print(f"[red]✗ Ollama Cloud[/red]: Error (Status {resp.status_code})")
@@ -1180,6 +1183,14 @@ def providers(
         asyncio.run(run_providers_test())
     else:
         config = get_config()
+
+        # If active default is ollama, print example output format
+        if config.default_provider == "ollama":
+            mode_name = "Ollama Cloud" if config.ollama.mode == "cloud" else "Ollama Local"
+            console.print(f"\n[bold]{mode_name}[/bold]")
+            console.print(f"Model: {config.ollama.model or ('gpt-oss:120b-cloud' if config.ollama.mode == 'cloud' else 'llama3')}")
+            console.print("Status: Connected\n")
+
         table = Table(title="Active AI Provider Statuses")
         table.add_column("Provider", style="bold magenta")
         table.add_column("Target Model", style="bold green")
@@ -1188,6 +1199,22 @@ def providers(
         table.add_row("OpenAI", config.openai.model, "Configured" if config.default_provider == "openai" else "Inactive")
         table.add_row("Anthropic Claude", config.anthropic.model, "Configured" if config.default_provider == "anthropic" else "Inactive")
         table.add_row("Google Gemini", config.gemini.model, "Configured" if config.default_provider == "gemini" else "Inactive")
+
+        ollama_cloud_status = "Inactive"
+        ollama_local_status = "Inactive"
+        if config.default_provider == "ollama":
+            if config.ollama.mode == "cloud":
+                ollama_cloud_status = "Active (Default)"
+                ollama_local_status = "Ready"
+            else:
+                ollama_local_status = "Active (Default)"
+                ollama_cloud_status = "Ready"
+        else:
+            ollama_cloud_status = "Ready"
+            ollama_local_status = "Ready"
+
+        table.add_row("Ollama Cloud", config.ollama.model or "gpt-oss:120b-cloud", ollama_cloud_status)
+        table.add_row("Ollama Local", config.ollama.model or "llama3", ollama_local_status)
         table.add_row("Local Mock Model", "shadow-mock-model", "Active (Default)" if config.default_provider == "mock" else "Ready")
 
         console.print(table)

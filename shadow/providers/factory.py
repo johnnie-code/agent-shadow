@@ -5,6 +5,7 @@ from shadow.providers.openai import OpenAIProvider
 from shadow.providers.anthropic import AnthropicProvider
 from shadow.providers.google import GeminiProvider
 from shadow.providers.mock import MockProvider
+from shadow.providers.ollama import OllamaProvider
 
 def get_provider(provider_name: Optional[str] = None) -> BaseProvider:
     """
@@ -20,5 +21,7 @@ def get_provider(provider_name: Optional[str] = None) -> BaseProvider:
         return AnthropicProvider()
     elif p_name == "gemini" or p_name == "google":
         return GeminiProvider()
+    elif p_name == "ollama":
+        return OllamaProvider()
     else:
         return MockProvider()

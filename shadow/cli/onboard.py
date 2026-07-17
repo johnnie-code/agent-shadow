@@ -59,18 +59,30 @@ def write_env_file(config_data: Dict[str, Any]):
     os.makedirs(config_dir, exist_ok=True)
     env_path = os.path.join(config_dir, ".env")
 
+    provider_selected = config_data.get('provider', 'mock')
+    default_provider = "ollama" if provider_selected in ["ollama_cloud", "ollama_local"] else provider_selected
+
     lines = [
         "# PROJECT SHADOW AUTONOMOUS CONFIGURATION\n",
         f"SHADOW_USER_NAME=\"{config_data.get('user_name', 'User')}\"\n",
         f"SHADOW_ASSISTANT_NAME=\"{config_data.get('assistant_name', 'Shadow')}\"\n",
         f"SHADOW_LIFE_MISSION=\"{config_data.get('life_mission', '')}\"\n",
-        f"SHADOW_DEFAULT_PROVIDER=\"{config_data.get('provider', 'mock')}\"\n"
+        f"SHADOW_DEFAULT_PROVIDER=\"{default_provider}\"\n"
     ]
 
     provider = config_data.get('provider', 'mock')
     api_key = config_data.get('api_key', '')
-    if provider != 'mock' and api_key:
+    if provider != 'mock' and api_key and provider not in ["ollama_cloud", "ollama_local"]:
         lines.append(f"SHADOW_{provider.upper()}__API_KEY=\"{api_key}\"\n")
+
+    if provider in ["ollama_cloud", "ollama_local"]:
+        lines.append(f"SHADOW_OLLAMA_MODE=\"{config_data.get('ollama_mode', 'local')}\"\n")
+        if api_key:
+            lines.append(f"SHADOW_OLLAMA_API_KEY=\"{api_key}\"\n")
+        if config_data.get('ollama_base_url'):
+            lines.append(f"SHADOW_OLLAMA_BASE_URL=\"{config_data.get('ollama_base_url')}\"\n")
+        if config_data.get('ollama_model'):
+            lines.append(f"SHADOW_OLLAMA_MODEL=\"{config_data.get('ollama_model')}\"\n")
 
     lines.append(f"SHADOW_NOTIFICATION_PREFERENCES=\"{config_data.get('notification_pref', 'terminal')}\"\n")
 
@@ -117,6 +129,10 @@ def run_onboarding(interactive: bool = True, defaults: Optional[Dict[str, Any]] 
     """
     Run first-launch interactive Rich-powered onboarding experience.
     """
+    ollama_mode = "local"
+    ollama_base_url = ""
+    ollama_model = ""
+
     if not interactive:
         # Use defaults for automated testing
         data = defaults or {}
@@ -127,6 +143,9 @@ def run_onboarding(interactive: bool = True, defaults: Optional[Dict[str, Any]] 
         projects = data.get("projects", ["Test Project Shadow"])
         provider = data.get("provider", "mock")
         api_key = data.get("api_key", "")
+        ollama_mode = data.get("ollama_mode", "local")
+        ollama_base_url = data.get("ollama_base_url", "")
+        ollama_model = data.get("ollama_model", "")
         telegram_enabled = data.get("telegram_enabled", False)
         telegram_token = data.get("telegram_token", "")
         telegram_chat_id = data.get("telegram_chat_id", "")
@@ -173,15 +192,33 @@ def run_onboarding(interactive: bool = True, defaults: Optional[Dict[str, Any]] 
         console.print("  1. Gemini (Recommended for Termux/Android)")
         console.print("  2. OpenAI")
         console.print("  3. Claude")
-        console.print("  4. Local Mock (Development & Offline Mode)")
+        console.print("  4. Ollama Cloud")
+        console.print("  5. Ollama Local")
+        console.print("  6. Local Mock (Development & Offline Mode)")
 
-        choice = Prompt.ask("[bold green]Select option (1-4)[/bold green]", choices=["1", "2", "3", "4"], default="4")
-        providers_map = {"1": "gemini", "2": "openai", "3": "anthropic", "4": "mock"}
+        choice = Prompt.ask("[bold green]Select option (1-6)[/bold green]", choices=["1", "2", "3", "4", "5", "6"], default="6")
+        providers_map = {
+            "1": "gemini",
+            "2": "openai",
+            "3": "anthropic",
+            "4": "ollama_cloud",
+            "5": "ollama_local",
+            "6": "mock"
+        }
         provider = providers_map[choice]
 
         # Step 7: Secure API key configuration
         api_key = ""
-        if provider != "mock":
+        if provider == "ollama_cloud":
+            ollama_mode = "cloud"
+            api_key = Prompt.ask("[bold green]Enter your Ollama Cloud API Key (optional)[/bold green]", password=True, default="")
+            ollama_base_url = Prompt.ask("[bold green]Enter your Ollama Cloud API URL[/bold green]", default="https://ollama.com/api")
+            ollama_model = Prompt.ask("[bold green]Enter your Ollama Cloud Model[/bold green]", default="gpt-oss:120b-cloud")
+        elif provider == "ollama_local":
+            ollama_mode = "local"
+            ollama_base_url = Prompt.ask("[bold green]Enter your local Ollama API URL[/bold green]", default="http://localhost:11434")
+            ollama_model = Prompt.ask("[bold green]Enter your local Ollama Model[/bold green]", default="llama3")
+        elif provider != "mock":
             api_key = Prompt.ask(f"[bold green]Enter your {provider.upper()} API Key[/bold green]", password=True)
 
         # Step 8: Android Capability Detection
@@ -227,6 +264,9 @@ def run_onboarding(interactive: bool = True, defaults: Optional[Dict[str, Any]] 
         "projects": projects,
         "provider": provider,
         "api_key": api_key,
+        "ollama_mode": ollama_mode,
+        "ollama_base_url": ollama_base_url,
+        "ollama_model": ollama_model,
         "telegram_enabled": telegram_enabled,
         "telegram_token": telegram_token,
         "telegram_chat_id": telegram_chat_id,
