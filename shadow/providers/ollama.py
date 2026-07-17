@@ -1,24 +1,31 @@
 import os
 import json
-import time
 import httpx
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from shadow.providers.base import BaseProvider
 from shadow.core.config import get_config
 from shadow.core.logging import log_decision, logger
 
+
 class OllamaProvider(BaseProvider):
     def __init__(self):
         config = get_config()
-        # Retrieve configuration from config/env
-        # Check if Ollama config exists in config; if not, fall back to defaults
+        # Retrieve configuration from environment variables or configuration file.
+        # PRECEDENCE RULES:
+        # 1. Environment variables (e.g. SHADOW_OLLAMA_MODE) always take precedence.
+        # 2. Configuration file settings (e.g. config.ollama.mode) are used as fallback.
+        # 3. Code-defined default values (e.g. "local", "llama3") are used if neither is set.
         ollama_config = getattr(config, "ollama", None)
 
-        self.mode = os.environ.get("SHADOW_OLLAMA_MODE") or (ollama_config.mode if ollama_config else "local")
+        self.mode = os.environ.get("SHADOW_OLLAMA_MODE") or (
+            ollama_config.mode if ollama_config else "local"
+        )
         self.mode = self.mode.lower()
 
-        self.api_key = os.environ.get("SHADOW_OLLAMA_API_KEY") or (ollama_config.api_key if ollama_config else None)
+        self.api_key = os.environ.get("SHADOW_OLLAMA_API_KEY") or (
+            ollama_config.api_key if ollama_config else None
+        )
 
         env_base_url = os.environ.get("SHADOW_OLLAMA_BASE_URL")
         if env_base_url:
@@ -26,11 +33,28 @@ class OllamaProvider(BaseProvider):
         elif ollama_config and ollama_config.api_base:
             self.api_base = ollama_config.api_base
         else:
-            self.api_base = "https://ollama.com/api" if self.mode == "cloud" else "http://localhost:11434"
+            self.api_base = (
+                "https://ollama.com/api"
+                if self.mode == "cloud"
+                else "http://localhost:11434"
+            )
 
-        self.model = os.environ.get("SHADOW_OLLAMA_MODEL") or (ollama_config.model if ollama_config else None)
+        self.model = os.environ.get("SHADOW_OLLAMA_MODEL") or (
+            ollama_config.model if ollama_config else None
+        )
         if not self.model:
             self.model = "gpt-oss:120b-cloud" if self.mode == "cloud" else "llama3"
+
+        # Cloud Mode Validation
+        if self.mode == "cloud":
+            if not self.api_key:
+                raise ValueError("Missing SHADOW_OLLAMA_API_KEY for Ollama Cloud mode.")
+            if not self.api_base:
+                raise ValueError(
+                    "Missing SHADOW_OLLAMA_BASE_URL for Ollama Cloud mode."
+                )
+            if not self.model:
+                raise ValueError("Missing SHADOW_OLLAMA_MODEL for Ollama Cloud mode.")
 
         # Defaults for robustness
         self.timeout = 30.0
@@ -41,6 +65,18 @@ class OllamaProvider(BaseProvider):
         # For Ollama Cloud, let's assume a mock small pricing or 0.0.
         return 0.0
 
+    def _build_url(self, base_url: str, endpoint: str) -> str:
+        """
+        Robust URL constructor for Ollama API.
+        Correctly supports both https://ollama.com and https://ollama.com/api
+        without producing duplicate /api.
+        """
+        base = base_url.rstrip("/")
+        if base.endswith("/api"):
+            return f"{base}/{endpoint.lstrip('/')}"
+        else:
+            return f"{base}/api/{endpoint.lstrip('/')}"
+
     async def _call_ollama_api(
         self,
         base_url: str,
@@ -48,13 +84,13 @@ class OllamaProvider(BaseProvider):
         messages: List[Dict[str, str]],
         endpoint: str = "chat",
         stream: bool = False,
-        stream_callback = None,
-        **kwargs
+        stream_callback=None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Low-level helper to invoke Ollama API (either chat or generate) with retries and timeout.
         """
-        url = f"{base_url.rstrip('/')}/api/{endpoint}"
+        url = self._build_url(base_url, endpoint)
 
         # Prepare payload
         payload: Dict[str, Any] = {
@@ -73,9 +109,7 @@ class OllamaProvider(BaseProvider):
                 prompt_parts.append(f"{role}: {content}")
             payload["prompt"] = "\n".join(prompt_parts)
 
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -89,7 +123,11 @@ class OllamaProvider(BaseProvider):
                         # Handle streaming response
                         full_content = ""
                         async with client.stream(
-                            "POST", url, json=payload, headers=headers, timeout=self.timeout
+                            "POST",
+                            url,
+                            json=payload,
+                            headers=headers,
+                            timeout=self.timeout,
                         ) as response:
                             response.raise_for_status()
                             async for line in response.aiter_lines():
@@ -99,7 +137,9 @@ class OllamaProvider(BaseProvider):
                                     data = json.loads(line)
                                     chunk = ""
                                     if endpoint == "chat":
-                                        chunk = data.get("message", {}).get("content", "")
+                                        chunk = data.get("message", {}).get(
+                                            "content", ""
+                                        )
                                     else:
                                         chunk = data.get("response", "")
 
@@ -107,13 +147,16 @@ class OllamaProvider(BaseProvider):
                                     if stream_callback:
                                         stream_callback(chunk)
                                 except Exception as json_err:
-                                    logger.warning(f"Failed to parse streaming line: {line}. Error: {json_err}")
+                                    logger.warning(
+                                        f"Failed to parse streaming line: {line}. Error: {json_err}"
+                                    )
 
                             return {
                                 "content": full_content,
-                                "tokens_used": len(full_content.split()) * 2,  # Rough estimation of tokens
+                                "tokens_used": len(full_content.split())
+                                * 2,  # Rough estimation of tokens
                                 "estimated_cost": 0.0,
-                                "model": payload["model"]
+                                "model": payload["model"],
                             }
                     else:
                         # Standard unary request
@@ -129,7 +172,9 @@ class OllamaProvider(BaseProvider):
                             content = data.get("response", "")
 
                         # Calculate rough token usage
-                        prompt_len = sum(len(m.get("content", "").split()) for m in messages)
+                        prompt_len = sum(
+                            len(m.get("content", "").split()) for m in messages
+                        )
                         completion_len = len(content.split())
                         tokens_used = int((prompt_len + completion_len) * 1.3)
 
@@ -137,10 +182,42 @@ class OllamaProvider(BaseProvider):
                             "content": content,
                             "tokens_used": tokens_used,
                             "estimated_cost": 0.0,
-                            "model": payload["model"]
+                            "model": payload["model"],
                         }
 
             except (httpx.HTTPError, asyncio.TimeoutError) as e:
+                # Determine provider name
+                provider_name = (
+                    "Ollama Cloud"
+                    if ("ollama.com" in base_url or self.mode == "cloud")
+                    else "Ollama Local"
+                )
+
+                status_code = "N/A"
+                response_body = "N/A"
+                if isinstance(e, httpx.HTTPStatusError):
+                    status_code = str(e.response.status_code)
+                    try:
+                        response_body = e.response.text
+                    except Exception:
+                        response_body = "<failed to read response text>"
+
+                timeout_reason = "N/A"
+                if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)):
+                    timeout_reason = str(e) or "Request timed out"
+
+                err_msg = (
+                    f"HTTP Request Failed:\n"
+                    f"- Provider Name: {provider_name}\n"
+                    f"- Model Name: {model}\n"
+                    f"- Request URL: {url}\n"
+                    f"- Exception Type: {type(e).__name__}\n"
+                    f"- HTTP Status Code: {status_code}\n"
+                    f"- Response Body: {response_body}\n"
+                    f"- Timeout Reason: {timeout_reason}"
+                )
+                logger.error(err_msg)
+
                 last_error = e
                 if attempt < self.max_retries:
                     await asyncio.sleep(backoff)
@@ -148,7 +225,9 @@ class OllamaProvider(BaseProvider):
                 else:
                     break
 
-        raise last_error or RuntimeError("Failed to connect to Ollama after multiple retries.")
+        raise last_error or RuntimeError(
+            "Failed to connect to Ollama after multiple retries."
+        )
 
     async def chat(self, messages: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
         """
@@ -163,36 +242,37 @@ class OllamaProvider(BaseProvider):
         # 1. Determine fallback chain based on configuration mode
         fallback_chain = []
         if self.mode == "cloud":
-            fallback_chain.append({
-                "name": "Ollama Cloud",
-                "api_base": self.api_base,
-                "model": self.model
-            })
+            fallback_chain.append(
+                {"name": "Ollama Cloud", "api_base": self.api_base, "model": self.model}
+            )
             # Add Ollama Local as a secondary fallback
             config = get_config()
             ollama_config = getattr(config, "ollama", None)
-            local_base = (ollama_config.api_base if ollama_config and ollama_config.mode == "local" else None) or "http://localhost:11434"
-            local_model = (ollama_config.model if ollama_config and ollama_config.mode == "local" else None) or "llama3"
-            fallback_chain.append({
-                "name": "Ollama Local",
-                "api_base": local_base,
-                "model": local_model
-            })
+            local_base = (
+                ollama_config.api_base
+                if ollama_config and ollama_config.mode == "local"
+                else None
+            ) or "http://localhost:11434"
+            local_model = (
+                ollama_config.model
+                if ollama_config and ollama_config.mode == "local"
+                else None
+            ) or "llama3"
+            fallback_chain.append(
+                {"name": "Ollama Local", "api_base": local_base, "model": local_model}
+            )
         else:
-            fallback_chain.append({
-                "name": "Ollama Local",
-                "api_base": self.api_base,
-                "model": self.model
-            })
+            fallback_chain.append(
+                {"name": "Ollama Local", "api_base": self.api_base, "model": self.model}
+            )
 
         # 2. Try Ollama providers in sequence
-        last_exception = None
         for provider_info in fallback_chain:
             try:
                 log_decision(
                     "INFO",
                     f"Attempting chat with {provider_info['name']}",
-                    reasoning=f"Using model {provider_info['model']} at {provider_info['api_base']}"
+                    reasoning=f"Using model {provider_info['model']} at {provider_info['api_base']}",
                 )
                 res = await self._call_ollama_api(
                     base_url=provider_info["api_base"],
@@ -201,27 +281,45 @@ class OllamaProvider(BaseProvider):
                     endpoint=endpoint,
                     stream=stream,
                     stream_callback=stream_callback,
-                    **call_kwargs
+                    **call_kwargs,
                 )
                 return res
             except Exception as e:
-                last_exception = e
+                # Do NOT silently fall back after configuration/authentication failures (401, 403, 400, 404, 405)
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (
+                    400,
+                    401,
+                    403,
+                    404,
+                    405,
+                ):
+                    raise e
                 log_decision(
                     "WARNING",
                     f"{provider_info['name']} failed",
-                    reasoning=f"Error encountered: {e}. Falling back to next provider in sequence."
+                    reasoning=f"Error encountered: {e}. Falling back to next provider in sequence.",
                 )
 
         # 3. Fallback to Gemini
         try:
-            log_decision("INFO", "Falling back to Gemini", reasoning="Both Ollama Cloud and Ollama Local are unavailable.")
+            log_decision(
+                "INFO",
+                "Falling back to Gemini",
+                reasoning="Both Ollama Cloud and Ollama Local are unavailable.",
+            )
             from shadow.providers.google import GeminiProvider
+
             gemini = GeminiProvider()
             return await gemini.chat(messages, **kwargs)
         except Exception as e:
-            log_decision("WARNING", "Gemini fallback failed", reasoning=f"Error: {e}. Falling back to Mock.")
+            log_decision(
+                "WARNING",
+                "Gemini fallback failed",
+                reasoning=f"Error: {e}. Falling back to Mock.",
+            )
 
         # 4. Fallback to Mock
         from shadow.providers.mock import MockProvider
+
         mock_prov = MockProvider()
         return await mock_prov.chat(messages, **kwargs)
