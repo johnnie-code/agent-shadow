@@ -35,6 +35,12 @@ class ProviderConfig(BaseModel):
     model: str = "default-model"
     api_base: Optional[str] = None
 
+class OllamaProviderConfig(BaseModel):
+    mode: str = "local"
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    model: Optional[str] = None
+
 # Check if Pydantic is v2
 IS_V2 = pydantic.__version__.startswith("2.")
 
@@ -162,6 +168,7 @@ if IS_V2:
         openai: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gpt-4o-mini"))
         anthropic: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="claude-3-5-sonnet-latest"))
         gemini: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gemini-2.5-flash"))
+        ollama: OllamaProviderConfig = Field(default_factory=lambda: OllamaProviderConfig(mode="local"))
         default_provider: str = "mock"  # Can be mock, openai, anthropic, gemini
 
         # System Preferences & Limits
@@ -172,6 +179,23 @@ if IS_V2:
         # Schedules
         scan_interval_seconds: int = 3600  # 1 hour
         reflection_time: str = "22:00"  # HH:MM daily format
+
+        @model_validator(mode="before")
+        @classmethod
+        def map_ollama_env_vars(cls, data: Any) -> Any:
+            if isinstance(data, dict):
+                ollama_data = data.get("ollama") or {}
+                if isinstance(ollama_data, dict):
+                    if "SHADOW_OLLAMA_MODE" in os.environ:
+                        ollama_data["mode"] = os.environ["SHADOW_OLLAMA_MODE"]
+                    if "SHADOW_OLLAMA_API_KEY" in os.environ:
+                        ollama_data["api_key"] = os.environ["SHADOW_OLLAMA_API_KEY"]
+                    if "SHADOW_OLLAMA_BASE_URL" in os.environ:
+                        ollama_data["api_base"] = os.environ["SHADOW_OLLAMA_BASE_URL"]
+                    if "SHADOW_OLLAMA_MODEL" in os.environ:
+                        ollama_data["model"] = os.environ["SHADOW_OLLAMA_MODEL"]
+                    data["ollama"] = ollama_data
+            return data
 
         @model_validator(mode="after")
         def resolve_paths(self) -> 'ShadowConfig':
@@ -207,6 +231,7 @@ else:
         openai: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gpt-4o-mini"))
         anthropic: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="claude-3-5-sonnet-latest"))
         gemini: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gemini-2.5-flash"))
+        ollama: OllamaProviderConfig = Field(default_factory=lambda: OllamaProviderConfig(mode="local"))
         default_provider: str = "mock"  # Can be mock, openai, anthropic, gemini
 
         # System Preferences & Limits
@@ -217,6 +242,21 @@ else:
         # Schedules
         scan_interval_seconds: int = 3600  # 1 hour
         reflection_time: str = "22:00"  # HH:MM daily format
+
+        @root_validator(pre=True)
+        def map_ollama_env_vars(cls, values):
+            ollama_data = values.get("ollama") or {}
+            if isinstance(ollama_data, dict):
+                if "SHADOW_OLLAMA_MODE" in os.environ:
+                    ollama_data["mode"] = os.environ["SHADOW_OLLAMA_MODE"]
+                if "SHADOW_OLLAMA_API_KEY" in os.environ:
+                    ollama_data["api_key"] = os.environ["SHADOW_OLLAMA_API_KEY"]
+                if "SHADOW_OLLAMA_BASE_URL" in os.environ:
+                    ollama_data["api_base"] = os.environ["SHADOW_OLLAMA_BASE_URL"]
+                if "SHADOW_OLLAMA_MODEL" in os.environ:
+                    ollama_data["model"] = os.environ["SHADOW_OLLAMA_MODEL"]
+                values["ollama"] = ollama_data
+            return values
 
         @root_validator(pre=False)
         def resolve_paths(cls, values):
