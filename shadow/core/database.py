@@ -30,6 +30,7 @@ def init_db():
         tags TEXT,                       -- Comma-separated tags
         importance_level TEXT DEFAULT 'Recent', -- 'Recent', 'Important', 'Permanent', 'Archived'
         importance_score REAL DEFAULT 1.0,
+        workspace TEXT DEFAULT 'global',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -40,6 +41,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE memory ADD COLUMN importance_score REAL DEFAULT 1.0")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE memory ADD COLUMN workspace TEXT DEFAULT 'global'")
     except Exception:
         pass
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_category ON memory(category);")

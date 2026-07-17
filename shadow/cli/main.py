@@ -30,6 +30,9 @@ app.add_typer(daemon_app, name="daemon")
 sandbox_app = typer.Typer(name="sandbox", help="Manage private Sandbox Computers for Ghost.")
 app.add_typer(sandbox_app, name="sandbox")
 
+memory_app = typer.Typer(name="memory", help="Manage persistent memories.")
+app.add_typer(memory_app, name="memory")
+
 console = Console()
 
 # --- Sandbox CLI Subcommands ---
@@ -1030,24 +1033,151 @@ def search(query: str):
 
     console.print(table)
 
-@app.command()
-def memory():
+@memory_app.callback(invoke_without_command=True)
+def memory_callback(ctx: typer.Context):
     """
     Display a general overview of stored long-term memories.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT category, COUNT(*) as count FROM memory GROUP BY category")
-    rows = cursor.fetchall()
-    conn.close()
+    if ctx.invoked_subcommand is None:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT category, COUNT(*) as count FROM memory GROUP BY category")
+        rows = cursor.fetchall()
+        conn.close()
 
-    table = Table(title="Persistent Memory Blocks Statistics")
-    table.add_column("Memory Category", style="bold cyan")
-    table.add_column("Stored Records Count", style="bold yellow")
+        table = Table(title="Persistent Memory Blocks Statistics")
+        table.add_column("Memory Category", style="bold cyan")
+        table.add_column("Stored Records Count", style="bold yellow")
 
-    for row in rows:
-        table.add_row(row["category"], str(row["count"]))
+        for row in rows:
+            table.add_row(row["category"], str(row["count"]))
+        console.print(table)
+
+@memory_app.command("save")
+def memory_save(
+    category: str = typer.Argument(..., help="The memory category (e.g. project, architecture, preference, decision)"),
+    content: str = typer.Argument(..., help="The memory content"),
+    key: Optional[str] = typer.Option(None, "--key", "-k", help="Optional unique lookup key"),
+    tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated list of tags"),
+    level: str = typer.Option("Recent", "--level", "-l", help="Importance level: Recent, Important, Permanent, Archived"),
+    score: Optional[float] = typer.Option(None, "--score", "-s", help="Optional importance score override"),
+    workspace: str = typer.Option("global", "--workspace", "-w", help="Optional workspace scoping")
+):
+    """Save a persistent memory block."""
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    mem_id = memory_engine.save_memory(
+        category=category,
+        content=content,
+        key=key,
+        tags=tag_list,
+        importance_level=level,
+        importance_score=score,
+        workspace=workspace
+    )
+    console.print(f"[green]✓ Persistent memory saved successfully. Memory ID: [bold]{mem_id}[/bold][/green]")
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Search term/query"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Scope search to a specific workspace"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max number of records to return")
+):
+    """Search workspace or global persistent memories."""
+    res = memory_engine.search_memory(query, workspace=workspace, limit=limit)
+    if not res:
+        console.print(f"[yellow]No matching memories found for query: '{query}'[/yellow]")
+        return
+
+    table = Table(title=f"Memory Search Results for '{query}'" + (f" (Workspace: {workspace})" if workspace else ""))
+    table.add_column("ID", style="dim")
+    table.add_column("Category", style="cyan")
+    table.add_column("Key", style="bold yellow")
+    table.add_column("Content")
+    table.add_column("Tags", style="magenta")
+    table.add_column("Level", style="green")
+    table.add_column("Score", style="yellow")
+    table.add_column("Workspace", style="blue")
+
+    for m in res:
+        tags_str = m.get("tags") or "None"
+        content_preview = m["content"][:60] + "..." if len(m["content"]) > 60 else m["content"]
+        table.add_row(
+            str(m["id"]),
+            m["category"],
+            m["key"] or "None",
+            content_preview,
+            tags_str,
+            m["importance_level"],
+            f"{m['importance_score']:.2f}",
+            m.get("workspace") or "global"
+        )
     console.print(table)
+
+@memory_app.command("update")
+def memory_update(
+    memory_id: int = typer.Argument(..., help="The memory ID to update"),
+    category: Optional[str] = typer.Option(None, "--category", "-c", help="New category"),
+    content: Optional[str] = typer.Option(None, "--content", "-o", help="New content"),
+    key: Optional[str] = typer.Option(None, "--key", "-k", help="New key"),
+    tags: Optional[str] = typer.Option(None, "--tags", "-t", help="New comma-separated tags"),
+    level: Optional[str] = typer.Option(None, "--level", "-l", help="New level"),
+    score: Optional[float] = typer.Option(None, "--score", "-s", help="New score"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="New workspace")
+):
+    """Update an existing persistent memory by ID."""
+    kwargs = {}
+    if category is not None:
+        kwargs["category"] = category
+    if content is not None:
+        kwargs["content"] = content
+    if key is not None:
+        kwargs["key"] = key
+    if tags is not None:
+        kwargs["tags"] = [t.strip() for t in tags.split(",")]
+    if level is not None:
+        kwargs["importance_level"] = level
+    if score is not None:
+        kwargs["importance_score"] = score
+    if workspace is not None:
+        kwargs["workspace"] = workspace
+
+    if not kwargs:
+        console.print("[yellow]No update fields specified.[/yellow]")
+        return
+
+    success = memory_engine.update_memory(memory_id, **kwargs)
+    if success:
+        console.print(f"[green]✓ Memory ID {memory_id} updated successfully.[/green]")
+    else:
+        console.print(f"[red]Error: Memory ID {memory_id} not found or update failed.[/red]")
+
+@memory_app.command("delete")
+def memory_delete(
+    memory_id: int = typer.Argument(..., help="The memory ID to delete")
+):
+    """Delete a persistent memory by ID."""
+    confirm = typer.confirm(f"Are you sure you want to permanently delete Memory ID {memory_id}?")
+    if confirm:
+        success = memory_engine.delete_memory(memory_id)
+        if success:
+            console.print(f"[green]✓ Memory ID {memory_id} deleted successfully.[/green]")
+        else:
+            console.print(f"[red]Error: Memory ID {memory_id} not found or delete failed.[/red]")
+    else:
+        console.print("[yellow]Delete cancelled.[/yellow]")
+
+@memory_app.command("summarize")
+def memory_summarize(
+    category: Optional[str] = typer.Option(None, "--category", "-c", help="Filter by category"),
+    tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Filter by comma-separated tags"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Filter by workspace")
+):
+    """Generate an automatic summary of matching memories."""
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    summary_text = memory_engine.summarize_memory(category=category, tags=tag_list, workspace=workspace)
+    console.print("\n[bold green]=== MEMORY SUMMARY ===[/bold green]\n")
+    console.print(summary_text)
+    console.print()
 
 @app.command()
 def opportunities(queries: Optional[str] = None):
