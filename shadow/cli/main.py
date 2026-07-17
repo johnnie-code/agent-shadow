@@ -27,7 +27,310 @@ app = typer.Typer(name="shadow", help="PROJECT SHADOW — Autonomous OS Control 
 daemon_app = typer.Typer(name="daemon", help="Manage the Shadow OS background daemon service.")
 app.add_typer(daemon_app, name="daemon")
 
+sandbox_app = typer.Typer(name="sandbox", help="Manage private Sandbox Computers for Ghost.")
+app.add_typer(sandbox_app, name="sandbox")
+
 console = Console()
+
+# --- Sandbox CLI Subcommands ---
+
+@sandbox_app.command("create")
+def sandbox_create(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    sandbox_type: str = typer.Option("generic", "--type", "-t", help="Target sandbox type, e.g., 'python', 'node', 'android'")
+):
+    """Create and initialize a secure, isolated sandbox computer."""
+    from shadow.core.sandbox import sandbox_manager
+    computer = sandbox_manager.create_sandbox(sandbox_id, sandbox_type)
+    console.print(f"[green]✓ Secure isolated sandbox computer '{sandbox_id}' of type '{sandbox_type}' created successfully.[/green]")
+    console.print(f"  Workspace location: [yellow]{computer.workspace_dir}[/yellow]")
+
+@sandbox_app.command("destroy")
+def sandbox_destroy(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer")
+):
+    """Completely destroy a sandbox computer and clean up all storage."""
+    from shadow.core.sandbox import sandbox_manager
+    confirm = typer.confirm(f"Are you sure you want to completely destroy sandbox '{sandbox_id}'? This action is irreversible!")
+    if confirm:
+        success = sandbox_manager.destroy_sandbox(sandbox_id)
+        if success:
+            console.print(f"[green]✓ Sandbox '{sandbox_id}' destroyed successfully.[/green]")
+        else:
+            console.print(f"[red]Error destroying sandbox '{sandbox_id}'.[/red]")
+    else:
+        console.print("[yellow]Destroy action cancelled.[/yellow]")
+
+@sandbox_app.command("list")
+def sandbox_list():
+    """List all active sandboxes, their metadata, and storage consumption."""
+    from shadow.core.sandbox import sandbox_manager
+    sandboxes = sandbox_manager.list_sandboxes()
+    if not sandboxes:
+        console.print("[yellow]No active sandbox computers found.[/yellow]")
+        return
+
+    table = Table(title="Shadow Sandbox Computers")
+    table.add_column("Sandbox ID", style="bold green")
+    table.add_column("Type", style="cyan")
+    table.add_column("Created At", style="dim")
+    table.add_column("Storage (MB)", style="bold yellow")
+    table.add_column("Status", style="magenta")
+
+    for s in sandboxes:
+        try:
+            created_str = datetime.fromtimestamp(float(s["created_at"])).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            created_str = s.get("created_at", "N/A")
+        table.add_row(
+            s["sandbox_id"],
+            s["sandbox_type"],
+            created_str,
+            f"{s.get('storage_mb', 0.0):.2f}",
+            s.get("status", "ready")
+        )
+    console.print(table)
+
+@sandbox_app.command("run")
+def sandbox_run(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    command: str = typer.Argument(..., help="Terminal command to execute inside the sandbox")
+):
+    """Run a shell command inside the sandbox's isolated computer."""
+    from shadow.core.sandbox import sandbox_manager
+    computer = sandbox_manager.get_sandbox(sandbox_id)
+    if not computer:
+        console.print(f"[red]Error: Sandbox computer '{sandbox_id}' not found.[/red]")
+        return
+
+    console.print(f"[cyan]Executing inside sandbox '{sandbox_id}': {command}[/cyan]")
+    res = asyncio.run(computer.execute_terminal(command))
+
+    if res["success"]:
+        console.print("[green]✓ Command completed successfully.[/green]")
+    else:
+        console.print(f"[red]✗ Command failed with exit code {res['exit_code']}.[/red]")
+
+    if res["stdout"]:
+        console.print("\n[bold]STDOUT:[/bold]")
+        console.print(res["stdout"])
+    if res["stderr"]:
+        console.print("\n[bold red]STDERR:[/bold red]")
+        console.print(res["stderr"])
+
+@sandbox_app.command("snapshot")
+def sandbox_snapshot(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    name: str = typer.Argument(..., help="Checkpoint name for the snapshot")
+):
+    """Take an instant checkpoint snapshot of the sandbox's current workspace state."""
+    from shadow.core.sandbox import sandbox_manager
+    success = sandbox_manager.snapshot_sandbox(sandbox_id, name)
+    if success:
+        console.print(f"[green]✓ Snapshot '{name}' successfully captured for sandbox '{sandbox_id}'.[/green]")
+    else:
+        console.print(f"[red]Error creating snapshot for sandbox '{sandbox_id}'.[/red]")
+
+@sandbox_app.command("restore")
+def sandbox_restore(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    name: str = typer.Argument(..., help="Snapshot checkpoint name to restore")
+):
+    """Instantly restore a sandbox computer to a previously saved checkpoint snapshot."""
+    from shadow.core.sandbox import sandbox_manager
+    success = sandbox_manager.restore_snapshot(sandbox_id, name)
+    if success:
+        console.print(f"[green]✓ Sandbox '{sandbox_id}' workspace successfully restored to snapshot '{name}'.[/green]")
+    else:
+        console.print(f"[red]Error: Snapshot '{name}' not found or could not be restored for sandbox '{sandbox_id}'.[/red]")
+
+@sandbox_app.command("sync")
+def sandbox_sync(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    preview: bool = typer.Option(False, "--preview", "-p", help="Preview changed files and unified diffs"),
+    conflict_check: bool = typer.Option(False, "--conflicts", "-c", help="Check for host/sandbox sync conflicts"),
+    approve: bool = typer.Option(False, "--approve", "-a", help="Approve and perform sync copy immediately")
+):
+    """Safely preview and synchronize verified files from the sandbox workspace back to the host system."""
+    from shadow.core.sync import FileSyncManager
+
+    if conflict_check or (not preview and not approve):
+        conflicts = FileSyncManager.detect_conflicts(sandbox_id)
+        if conflicts:
+            console.print("[bold red]⚠️ SYNC CONFLICTS DETECTED:[/bold red]")
+            for conf in conflicts:
+                console.print(f"  • File: [yellow]{conf['file']}[/yellow]")
+                console.print(f"    Message: {conf['message']}")
+            if not approve:
+                return
+        else:
+            console.print("[green]✔ No conflict detection issues found.[/green]")
+
+    if preview:
+        changes = FileSyncManager.preview_changes(sandbox_id)
+        if not changes:
+            console.print("[yellow]No modifications or new files found inside sandbox workspace.[/yellow]")
+            return
+        console.print("\n[bold cyan]=== Sandbox Sync Preview ===[/bold cyan]")
+        for c in changes:
+            console.print(f"\nFile: [green]{c['file']}[/green] ({c['status']})")
+            if c["diff"]:
+                console.print("[bold]Diff:[/bold]")
+                console.print(c["diff"])
+        return
+
+    if approve:
+        confirm = typer.confirm(f"Are you sure you want to synchronize all verified changes from sandbox '{sandbox_id}' to host?")
+        if confirm:
+            res = FileSyncManager.apply_sync(sandbox_id)
+            if res["success"]:
+                console.print(f"[green]✓ Synchronization succeeded. Synced files: {', '.join(res['synced_files']) or 'none'}[/green]")
+                console.print(f"  Rollback backup saved at: [yellow]{res['backup_dir']}[/yellow]")
+            else:
+                console.print(f"[bold red]✗ Sync failed:[/bold red] {res.get('error') or 'Aborted due to conflicts'}")
+        else:
+            console.print("[yellow]Sync copy aborted.[/yellow]")
+
+@sandbox_app.command("status")
+def sandbox_status(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer")
+):
+    """Query sandbox diagnostics, logs, and simulated CPU/RAM/storage resource limits."""
+    from shadow.core.sandbox import sandbox_manager
+    computer = sandbox_manager.get_sandbox(sandbox_id)
+    if not computer:
+        console.print(f"[red]Error: Sandbox computer '{sandbox_id}' not found.[/red]")
+        return
+
+    meta = computer.load_meta()
+    usage = computer.get_resource_usage()
+
+    console.print(f"\n[bold cyan]=== Sandbox Computer '{sandbox_id}' Status ===[/bold cyan]\n")
+    console.print(f"Type:             [green]{meta.get('sandbox_type')}[/green]")
+    console.print(f"Status:           [green]{meta.get('status')}[/green]")
+    console.print(f"Installed Software:[yellow]{', '.join(meta.get('installed_software', [])) or 'none'}[/yellow]")
+    console.print(f"Storage Used:     [yellow]{usage['storage_mb']:.2f} MB[/yellow]")
+    console.print(f"CPU usage:        [yellow]{usage['cpu_percent']:.1f}%[/yellow]")
+    console.print(f"RAM footprint:    [yellow]{usage['ram_mb']:.1f} MB[/yellow]")
+
+    # List history
+    history = meta.get("workspace", {}).get("execution_history", [])
+    if history:
+        console.print("\n[bold]Recent Command Logs:[/bold]")
+        for h in history[-5:]:
+            console.print(f"  • [green]{h['command']}[/green] (Exit: {h['exit_code']})")
+
+@sandbox_app.command("notebook")
+def sandbox_notebook(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer")
+):
+    """Inspect Ghost's reasoning and progress logged inside the persistent AI Notebook."""
+    from shadow.core.sandbox import sandbox_manager
+    computer = sandbox_manager.get_sandbox(sandbox_id)
+    if not computer:
+        console.print(f"[red]Error: Sandbox computer '{sandbox_id}' not found.[/red]")
+        return
+
+    nb = computer.load_notebook()
+    console.print(f"\n[bold magenta]=== AI Notebook for Sandbox '{sandbox_id}' ===[/bold magenta]\n")
+    console.print(f"[bold cyan]OBJECTIVE:[/bold cyan] {nb.get('objective') or 'None'}\n")
+
+    sections = [
+        ("plan", "Plan Checklist"),
+        ("progress", "Progress Logs"),
+        ("problems", "Encountered Problems"),
+        ("solutions", "Applied Solutions"),
+        ("next_steps", "Next Steps"),
+        ("lessons_learned", "Lessons Learned")
+    ]
+    for key, title in sections:
+        val = nb.get(key, [])
+        console.print(f"[bold]{title}:[/bold]")
+        if val:
+            for item in val:
+                console.print(f"  • {item}")
+        else:
+            console.print("  • None logged yet")
+        console.print()
+
+@sandbox_app.command("jobs")
+def sandbox_jobs():
+    """List all running and finished background sandbox jobs."""
+    from shadow.core.sandbox import job_manager
+    jobs = job_manager.list_jobs()
+    if not jobs:
+        console.print("[yellow]No background sandbox jobs registered.[/yellow]")
+        return
+
+    table = Table(title="Sandbox Background Jobs")
+    table.add_column("Job ID", style="bold green")
+    table.add_column("Sandbox ID", style="cyan")
+    table.add_column("PID", style="yellow")
+    table.add_column("Status", style="magenta")
+    table.add_column("Command")
+
+    for j in jobs:
+        table.add_row(
+            j["job_id"],
+            j["sandbox_id"],
+            str(j["pid"]),
+            j["status"],
+            j["command"]
+        )
+    console.print(table)
+
+@sandbox_app.command("jobs-start")
+def sandbox_jobs_start(
+    sandbox_id: str = typer.Argument(..., help="Unique identifier of the sandbox computer"),
+    command: str = typer.Argument(..., help="Command to run in background")
+):
+    """Start a long-running command in the background that survives CLI exit."""
+    from shadow.core.sandbox import job_manager
+    job_id = job_manager.start_job(sandbox_id, command)
+    console.print(f"[green]✓ Background job '{job_id}' started successfully with PID tracking inside sandbox '{sandbox_id}'.[/green]")
+
+@sandbox_app.command("logs")
+def sandbox_logs(
+    job_id: str = typer.Argument(..., help="ID of the background job")
+):
+    """Read standard outputs and trace errors of a background job."""
+    from shadow.core.sandbox import job_manager
+    status = job_manager.get_job_status(job_id)
+    if status["status"] == "not_found":
+        console.print(f"[red]Error: Job '{job_id}' not found.[/red]")
+        return
+
+    log_path = status.get("log_path")
+    if os.path.exists(log_path):
+        with open(log_path, "r", encoding="utf-8") as f:
+            console.print(f"\n[bold magenta]=== Log Output for Job '{job_id}' ===[/bold magenta]\n")
+            console.print(f.read())
+    else:
+        console.print(f"[yellow]No log files found at {log_path}[/yellow]")
+
+@sandbox_app.command("cancel")
+def sandbox_cancel(
+    job_id: str = typer.Argument(..., help="ID of the background job to kill")
+):
+    """Terminate a runaway background job process."""
+    from shadow.core.sandbox import job_manager
+    success = job_manager.cancel_job(job_id)
+    if success:
+        console.print(f"[green]✓ Job '{job_id}' has been terminated successfully.[/green]")
+    else:
+        console.print(f"[red]Error: Job '{job_id}' could not be terminated.[/red]")
+
+@sandbox_app.command("resume")
+def sandbox_resume(
+    job_id: str = typer.Argument(..., help="ID of the background job to resume")
+):
+    """Resume a paused background job process."""
+    from shadow.core.sandbox import job_manager
+    success = job_manager.resume_job(job_id)
+    if success:
+        console.print(f"[green]✓ Job '{job_id}' has been resumed successfully.[/green]")
+    else:
+        console.print(f"[red]Error: Job '{job_id}' could not be resumed.[/red]")
 
 # --- Onboarding Completion Helper ---
 
