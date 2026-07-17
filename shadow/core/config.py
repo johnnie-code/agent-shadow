@@ -3,6 +3,8 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
+SHADOW_HOME = os.path.abspath(os.path.expanduser(os.environ.get("SHADOW_HOME", "~/.shadow")))
+
 class ProviderConfig(BaseModel):
     api_key: Optional[str] = None
     model: str = "default-model"
@@ -11,9 +13,9 @@ class ProviderConfig(BaseModel):
 class ShadowConfig(BaseSettings):
     # App Settings
     app_name: str = "Shadow"
-    db_path: str = "shadow.db"
+    db_path: str = os.path.join(SHADOW_HOME, "shadow.db")
     log_level: str = "INFO"
-    data_dir: str = "."
+    data_dir: str = SHADOW_HOME
 
     # Provider Configurations
     openai: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gpt-4o-mini"))

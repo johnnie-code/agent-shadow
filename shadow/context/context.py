@@ -5,6 +5,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from shadow.core.events import event_bus
 from shadow.core.logging import logger
+from shadow.core.config import SHADOW_HOME
 
 class ContextFileHandler(FileSystemEventHandler):
     def __init__(self, callback):
@@ -20,8 +21,8 @@ class ContextFileHandler(FileSystemEventHandler):
 
 
 class ContextEngine:
-    def __init__(self, watch_dir: str = "."):
-        self.watch_dir = watch_dir
+    def __init__(self, watch_dir: Optional[str] = None):
+        self.watch_dir = watch_dir or SHADOW_HOME
         self.observer: Optional[Observer] = None
         self._cache: Dict[str, str] = {}
         self.loop: Optional[asyncio.AbstractEventLoop] = None

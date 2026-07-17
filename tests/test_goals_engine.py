@@ -3,6 +3,7 @@ from shadow.core.database import init_db
 from shadow.goals.engine import goals_engine
 
 def test_goals_parsing():
+    init_db()
     mock_markdown = """
 # Identity
 Elite Python Hacker.

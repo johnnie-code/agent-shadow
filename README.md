@@ -187,3 +187,61 @@ Shadow is being developed as a lightweight AI operating system that evolves alon
 Rather than simply responding to prompts, it continuously learns, plans, researches, reflects, and executes work that advances the user's long-term mission.
 
 The ultimate objective is to create an AI companion that functions as a proactive second brain—one capable of understanding goals, adapting strategies, coordinating specialized agents, and helping users accomplish ambitious, multi-year objectives while remaining efficient enough to run directly on an Android phone.
+
+---
+
+## Production Installation (Native System-Wide CLI)
+
+Shadow behaves like a real native utility rather than a standard Python project. After a simple installation, you can execute the `shadow` command globally from any directory without manually activating virtual environments or invoking Python.
+
+### Quick Install
+
+Install Shadow with a single command inside Termux or any Linux terminal:
+
+```bash
+./install.sh
+```
+
+The installer will:
+1. Automatically update package indexes and install required packages (`python`, `git`, `sqlite`) if running in Termux.
+2. Build an isolated virtual environment at `~/.shadow/venv/` and install Shadow along with all its Python dependencies.
+3. Establish a production-grade file hierarchy:
+   - `~/.shadow/config/` (System preferences and configuration)
+   - `~/.shadow/backups/` (Auto-backups for database & mission files)
+   - `~/.shadow/logs/` (Daemon and structured decision logs)
+   - `~/.shadow/mission.md` (Active, user-managed mission context file)
+   - `~/.shadow/shadow.db` (High-performance SQLite database in WAL mode)
+4. Expose a fast, global launcher at `$PREFIX/bin/shadow` (or fallbacks like `~/.local/bin/shadow`).
+5. Configure intelligent tab completion for your shell (`bash`, `zsh`, `fish`).
+6. Initialize the SQLite database tables and perform a final validation.
+
+---
+
+## Command Line Interface (CLI)
+
+Shadow is managed entirely via the `shadow` CLI command:
+
+### Core Commands
+* `shadow status`: Query active daemon status and database statistics.
+* `shadow mission`: Parse and synchronize your `~/.shadow/mission.md` goals to the structured database.
+* `shadow goals`: List your active goals and projects.
+* `shadow tasks`: Display prioritized, queued action items.
+* `shadow execute <task_id>`: Safely trigger execution of a specific task.
+* `shadow approvals`: Review and approve/reject Safety Level 2 hold actions.
+* `shadow opportunities`: Trigger a real-time web scan to discover new opportunities.
+* `shadow memory`: View high-levelPersistent Memory statistics.
+* `shadow search <query>`: Search your sqlite memories and learning insights index.
+* `shadow reflect`: Run evening reflection audits.
+* `shadow tui`: Launch the real-time interactive terminal dashboard.
+
+### Daemon Service Management
+The FastAPI/Uvicorn background server can run as an independent daemon that survives terminal sessions:
+* `shadow daemon start` (or `shadow start`): Detach and start the API background daemon on port 8000.
+* `shadow daemon stop` (or `shadow stop`): Gracefully stop the running background daemon.
+* `shadow daemon restart`: Restart the background daemon process.
+* `shadow daemon status`: Verify whether the daemon is online, healthy, and responsive.
+
+### Administrative Tools
+* `shadow doctor`: Run complete self-repair diagnostics (automatically identifies and heals broken virtual environments, missing package dependencies, corrupted databases, missing configurations, missing mission files, or launcher execution permissions).
+* `shadow update`: Securely update to the latest release (creates automatic time-stamped backups of your database/configurations, pulls updates from Git, upgrades venv packages safely, and verifies the update—performing automatic rolling back to your previous stable state if verification fails).
+* `shadow uninstall`: Safely uninstall Shadow, offering options to preserve or delete your databases and configuration directories.
