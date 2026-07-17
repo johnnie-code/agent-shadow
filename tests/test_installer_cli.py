@@ -1,0 +1,118 @@
+import os
+import shutil
+import pytest
+from unittest.mock import patch, MagicMock
+from typer.testing import CliRunner
+from shadow.cli.main import app
+from shadow.core.database import init_db
+
+runner = CliRunner()
+
+@pytest.fixture(autouse=True)
+def setup_test_db():
+    init_db()
+
+def test_doctor_command():
+    # Test shadow doctor execution
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "Project Shadow Doctor Diagnostics" in result.stdout
+    assert "All diagnostic checks passed" in result.stdout
+
+def test_doctor_missing_mission():
+    # Test doctor with missing mission.md (auto repairs/creates it)
+    if os.path.exists("mission.md"):
+        shutil.copy2("mission.md", "mission.md.bak")
+        os.remove("mission.md")
+
+    try:
+        result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "mission.md file is missing" in result.stdout
+        assert "Generating a default mission.md" in result.stdout
+        assert os.path.exists("mission.md")
+    finally:
+        # Restore backup
+        if os.path.exists("mission.md.bak"):
+            shutil.copy2("mission.md.bak", "mission.md")
+            os.remove("mission.md.bak")
+
+@patch("subprocess.run")
+def test_update_success(mock_run):
+    # Mock subprocess.run for git pull, pip/uv install, pytest to return 0/success
+    mock_run.return_value = MagicMock(returncode=0, stdout="Success")
+
+    # Mock shutil.copy2 to prevent actual file copying during test, but verify it gets called
+    with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs:
+        result = runner.invoke(app, ["update"])
+        assert result.exit_code == 0
+        assert "Safely Updating Project Shadow" in result.stdout
+        assert "Creating automatic backup" in result.stdout
+        assert "Git pull completed successfully" in result.stdout
+        assert "Python dependencies upgraded" in result.stdout
+        assert "complete self-test" in result.stdout
+        assert "successfully updated" in result.stdout
+
+        # Verify backup copies were attempted
+        assert mock_copy.call_count > 0
+
+@patch("subprocess.run")
+def test_update_failure_and_rollback(mock_run):
+    # Mock subprocess.run to fail on git pull or dependencies install
+    # Let's make git pull fail (returncode=1)
+    mock_run.return_value = MagicMock(returncode=1, stderr="Git pull conflict")
+
+    with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs, patch("shadow.cli.main.run_rollback") as mock_rollback:
+        result = runner.invoke(app, ["update"])
+        assert result.exit_code == 0
+        assert "Git update failed" in result.stdout
+        # Git pull failing doesn't require rollback as code hasn't changed yet
+        assert mock_rollback.call_count == 0
+
+    # Let's mock git pull to succeed, but python dependency upgrade to fail
+    def side_effect(cmd, *args, **kwargs):
+        if "pull" in cmd:
+            return MagicMock(returncode=0, stdout="Git pulled")
+        # Any other command (pip or uv) fails
+        if kwargs.get("check"):
+            raise subprocess.CalledProcessError(1, cmd, stderr="Failed dependency installation")
+        return MagicMock(returncode=1, stderr="Failed dependency installation")
+
+    mock_run.side_effect = side_effect
+
+    with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs, patch("shadow.cli.main.run_rollback") as mock_rollback:
+        result = runner.invoke(app, ["update"])
+        assert result.exit_code == 0
+        assert "Dependency upgrade failed" in result.stdout
+        # Rollback should be called
+        assert mock_rollback.call_count == 1
+
+def test_uninstall_cancelled():
+    # Test cancelling uninstall
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    assert result.exit_code == 0
+    assert "Uninstallation cancelled" in result.stdout
+
+@patch("shutil.rmtree")
+@patch("os.remove")
+@patch("os.path.exists")
+def test_uninstall_preserve_data(mock_exists, mock_remove, mock_rmtree):
+    # Test uninstall and preserve user data
+    # Mock os.path.exists to return True for .venv and prevent recursion
+    mock_exists.side_effect = lambda path: True if path in [".venv", "mission.md", "shadow.db", ".env"] else False
+    result = runner.invoke(app, ["uninstall"], input="y\ny\n")
+    assert result.exit_code == 0
+    assert "User data (database, config, mission.md) preserved" in result.stdout
+    assert "Deleting virtual environment" in result.stdout
+    assert "uninstalled successfully" in result.stdout
+
+@patch("shutil.rmtree")
+@patch("os.remove")
+def test_uninstall_purge_data(mock_remove, mock_rmtree):
+    # Test uninstall and remove/purge user data
+    result = runner.invoke(app, ["uninstall"], input="y\nn\n")
+    assert result.exit_code == 0
+    assert "Removing user data" in result.stdout
+    # Check that remove was called on database/env/mission
+    assert mock_remove.call_count > 0
+    assert "uninstalled successfully" in result.stdout

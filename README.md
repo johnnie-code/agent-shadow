@@ -22,8 +22,8 @@ To install, clone the repository and run:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/shadow-os.git
-cd shadow-os
+git clone https://github.com/johnnie-code/agent-shadow.git
+cd agent-shadow
 
 # Make the installer executable and run it
 chmod +x install.sh
@@ -43,8 +43,8 @@ If you prefer to set up the environment manually, follow these instructions:
 
 2. **Set up a Virtual Environment:**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
+   python3 -m venv .venv
+   source .venv/bin/activate
    pip install --upgrade pip setuptools wheel
    ```
 
@@ -68,7 +68,7 @@ If you prefer to set up the environment manually, follow these instructions:
 
 Ensure your virtual environment is active before running commands:
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
 ```
 
 ### 1. Verification & Help
@@ -140,7 +140,7 @@ If you encounter compilation errors or freezes while installing `pydantic` or `p
 
 ### Executable Command `shadow` Not Found
 If the `shadow` command is not available in your path after editable installation:
-* **Fix:** Make sure you activated your virtual environment (`source venv/bin/activate`). If you are running outside a virtual environment, add Python's user bin directory to your `$PATH` (typically `export PATH="$HOME/.local/bin:$PATH"`). Alternatively, use `python3 -m shadow.cli.main` instead.
+* **Fix:** Make sure you activated your virtual environment (`source .venv/bin/activate`). If you are running outside a virtual environment, add Python's user bin directory to your `$PATH` (typically `export PATH="$HOME/.local/bin:$PATH"`). Alternatively, use `python3 -m shadow.cli.main` instead.
 
 ### Address Already in Use (Port 8000/8089)
 If the background API server fails to bind:

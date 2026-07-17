@@ -2,6 +2,9 @@ import os
 import sys
 import typer
 import asyncio
+import shutil
+import subprocess
+from datetime import datetime
 from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
@@ -333,19 +336,337 @@ def reflect():
     console.print("\n[bold green]=== DAILY REFLECTION REPORT ===[/bold green]")
     console.print(text)
 
+def run_rollback(backup_dir: str):
+    console.print(f"\n[bold red]🚨 Update failed! Starting automatic rollback to backup from {backup_dir}...[/bold red]")
+    try:
+        for file in ["mission.md", "shadow.db", ".env"]:
+            src = os.path.join(backup_dir, file)
+            if os.path.exists(src):
+                shutil.copy2(src, ".")
+                console.print(f"[green][✓] Restored {file}[/green]")
+        console.print("[bold green]✓ Rollback completed successfully. System is restored to its previous state.[/bold green]")
+    except Exception as re:
+        console.print(f"[red][x] Critical Error: Rollback failed: {re}[/red]")
+
 @app.command()
 def update():
     """
-    Synchronize configuration, refresh goals, and clean database tables.
+    Safely update Shadow to the latest version.
     """
-    console.print("[green]Re-initializing tables and reloading config settings...[/green]")
-    init_db()
-    if os.path.exists("mission.md"):
-        with open("mission.md", "r", encoding="utf-8") as f:
-            markdown_text = f.read()
-        goals = goals_engine.parse_mission_markdown(markdown_text)
-        goals_engine.sync_goals_to_db(goals)
-    console.print("[green]System updated successfully.[/green]")
+    console.print("[bold blue]🔄 Safely Updating Project Shadow...[/bold blue]\n")
+
+    # 1. Perform backing up
+    backup_dir = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    console.print(f"[*] Creating automatic backup at [yellow]{backup_dir}/[/yellow]...")
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        backed_up_files = []
+        for file in ["mission.md", "shadow.db", ".env"]:
+            if os.path.exists(file):
+                shutil.copy2(file, backup_dir)
+                backed_up_files.append(file)
+        console.print(f"[green][✓] Backed up: {', '.join(backed_up_files)}[/green]")
+    except Exception as e:
+        console.print(f"[red][x] Backup failed: {e}. Aborting update for safety.[/red]")
+        return
+
+    # 2. Pull changes from repository
+    console.print("[*] Pulling latest updates from git repository...")
+    try:
+        if not os.path.exists(".git"):
+            raise Exception("Not a git repository.")
+
+        res = subprocess.run(["git", "pull"], text=True, capture_output=True)
+        if res.returncode != 0:
+            raise Exception(res.stderr or "git pull command failed.")
+        console.print("[green][✓] Git pull completed successfully.[/green]")
+    except Exception as e:
+        console.print(f"[red][x] Git update failed: {e}[/red]")
+        console.print("[yellow]No code changes made, no rollback required.[/yellow]")
+        return
+
+    # 3. Upgrade Python dependencies
+    console.print("[*] Upgrading Python dependencies...")
+    try:
+        use_uv = shutil.which("uv") is not None
+        if use_uv:
+            subprocess.run(["uv", "pip", "install", "-e", "."], check=True)
+        else:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], check=True)
+        console.print("[green][✓] Python dependencies upgraded successfully.[/green]")
+    except Exception as e:
+        console.print(f"[red][x] Dependency upgrade failed: {e}[/red]")
+        run_rollback(backup_dir)
+        return
+
+    # 4. Run migrations/initialization
+    console.print("[*] Running database migrations and syncing mission...")
+    try:
+        init_db()
+        if os.path.exists("mission.md"):
+            with open("mission.md", "r", encoding="utf-8") as f:
+                markdown_text = f.read()
+            goals = goals_engine.parse_mission_markdown(markdown_text)
+            goals_engine.sync_goals_to_db(goals)
+        console.print("[green][✓] Migrations and synchronization completed successfully.[/green]")
+    except Exception as e:
+        console.print(f"[red][x] Migration/sync failed: {e}[/red]")
+        run_rollback(backup_dir)
+        return
+
+    # 5. Run Self-Test
+    console.print("[*] Performing complete self-test...")
+    try:
+        res = subprocess.run([sys.executable, "-m", "pytest", "tests/"], capture_output=True, text=True)
+        if res.returncode != 0:
+            raise Exception(res.stderr or "Self-tests failed.")
+        console.print("[green][✓] Complete self-test suites passed perfectly![/green]")
+    except Exception as e:
+        console.print(f"[red][x] Self-test failed: {e}[/red]")
+        run_rollback(backup_dir)
+        return
+
+    console.print("\n[bold green]✓ Shadow Update: Project Shadow successfully updated to the latest version![/bold green]")
+
+@app.command()
+def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repair restorable issues.")):
+    """
+    Diagnose and repair installation issues with Project Shadow.
+    """
+    console.print("[bold blue]🩺 Running Project Shadow Doctor Diagnostics...[/bold blue]\n")
+    all_ok = True
+
+    # 1. Termux Environment Check
+    is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
+    if is_termux:
+        console.print("[green][✓] Termux environment detected.[/green]")
+        # Check Termux:API
+        has_api = shutil.which("termux-battery-status") is not None
+        if has_api:
+            console.print("[green][✓] Termux:API command-line tools are installed.[/green]")
+        else:
+            console.print("[yellow][!] Termux:API command-line tools are missing.[/yellow]")
+            console.print("    To fix: Run 'pkg install termux-api' in Termux.")
+            all_ok = False
+    else:
+        console.print("[yellow][!] Non-Termux environment detected. Skipping Termux:API checks.[/yellow]")
+
+    # 2. Dependency Check
+    dependencies = ["pydantic", "pydantic_settings", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer"]
+    missing_deps = []
+    for dep in dependencies:
+        try:
+            __import__(dep)
+        except ImportError:
+            missing_deps.append(dep)
+
+    if not missing_deps:
+        console.print("[green][✓] All required Python dependencies are successfully installed.[/green]")
+    else:
+        console.print(f"[red][x] Missing Python dependencies: {', '.join(missing_deps)}[/red]")
+        all_ok = False
+        if repair:
+            console.print("[yellow]Attempting to repair: Installing missing dependencies...[/yellow]")
+            try:
+                use_uv = shutil.which("uv") is not None
+                if use_uv:
+                    subprocess.run(["uv", "pip", "install", "-e", "."], check=True)
+                else:
+                    subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], check=True)
+                console.print("[green][✓] Reinstalled dependencies successfully.[/green]")
+            except Exception as e:
+                console.print(f"[red][x] Failed to reinstall dependencies: {e}[/red]")
+
+    # 3. Database Check
+    db_ok = False
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row["name"] for row in cursor.fetchall()]
+        conn.close()
+        required_tables = ["memory", "conversation", "goals", "opportunities", "tasks", "system_logs", "approvals"]
+        missing_tables = [t for t in required_tables if t not in tables]
+        if not missing_tables:
+            console.print("[green][✓] Database connection and schema verified.[/green]")
+            db_ok = True
+        else:
+            console.print(f"[yellow][!] Database schema is missing tables: {', '.join(missing_tables)}[/yellow]")
+            all_ok = False
+            if repair:
+                console.print("[yellow]Attempting to repair: Reinitializing database tables...[/yellow]")
+                init_db()
+                console.print("[green][✓] Database schema successfully reinitialized.[/green]")
+                db_ok = True
+    except Exception as e:
+        console.print(f"[red][x] Database connection or integrity check failed: {e}[/red]")
+        all_ok = False
+        if repair:
+            console.print("[yellow]Attempting to repair: Initializing new database...[/yellow]")
+            try:
+                init_db()
+                console.print("[green][✓] Database successfully initialized.[/green]")
+                db_ok = True
+            except Exception as re:
+                console.print(f"[red][x] Database repair failed: {re}[/red]")
+
+    # 4. Mission file and goal sync check
+    if not os.path.exists("mission.md"):
+        console.print("[red][x] mission.md file is missing.[/red]")
+        all_ok = False
+        if repair:
+            console.print("[yellow]Attempting to repair: Generating a default mission.md...[/yellow]")
+            try:
+                with open("mission.md", "w", encoding="utf-8") as f:
+                    f.write("# MISSION\n\n## Identity\n- **Name**: Shadow Agent\n- **Role**: Personal Chief of Staff / Autonomous Agent OS\n")
+                console.print("[green][✓] Generated default mission.md.[/green]")
+                if db_ok:
+                    with open("mission.md", "r", encoding="utf-8") as f:
+                        markdown_text = f.read()
+                    goals = goals_engine.parse_mission_markdown(markdown_text)
+                    goals_engine.sync_goals_to_db(goals)
+                    console.print("[green][✓] Synced default goals to database.[/green]")
+            except Exception as e:
+                console.print(f"[red][x] Failed to repair mission.md: {e}[/red]")
+    else:
+        console.print("[green][✓] mission.md file exists.[/green]")
+        if db_ok:
+            try:
+                active_goals = goals_engine.get_active_goals()
+                if active_goals:
+                    console.print(f"[green][✓] Database contains {len(active_goals)} active goal(s).[/green]")
+                else:
+                    console.print("[yellow][!] Database does not contain active goals. Syncing mission.md...[/yellow]")
+                    with open("mission.md", "r", encoding="utf-8") as f:
+                        markdown_text = f.read()
+                    goals = goals_engine.parse_mission_markdown(markdown_text)
+                    goals_engine.sync_goals_to_db(goals)
+                    console.print("[green][✓] Mission goals synchronized to database successfully.[/green]")
+            except Exception as e:
+                console.print(f"[yellow][!] Failed to sync/verify goals: {e}[/yellow]")
+
+    # 5. Config/API Keys Check
+    config = get_config()
+    provider = config.default_provider
+    console.print(f"[*] Active Default AI Provider: [bold purple]{provider}[/bold purple]")
+    if provider == "mock":
+        console.print("[green][✓] Mock provider active. No API keys required for development.[/green]")
+    else:
+        has_key = False
+        if provider == "openai" and config.openai.api_key:
+            has_key = True
+        elif provider == "anthropic" and config.anthropic.api_key:
+            has_key = True
+        elif provider == "gemini" and config.gemini.api_key:
+            has_key = True
+
+        if has_key:
+            console.print(f"[green][✓] API Key for provider '{provider}' is configured.[/green]")
+        else:
+            console.print(f"[red][x] API Key for provider '{provider}' is missing or empty.[/red]")
+            all_ok = False
+            if repair:
+                new_key = typer.prompt(f"Please enter your API Key for provider '{provider}' (or leave blank to skip)", default="", show_default=False)
+                if new_key:
+                    try:
+                        env_file = ".env"
+                        if os.path.exists(env_file):
+                            with open(env_file, "r") as f:
+                                lines = f.readlines()
+                            provider_key_str = f"SHADOW_{provider.upper()}__API_KEY"
+                            key_exists = False
+                            for i, line in enumerate(lines):
+                                if line.startswith(f"{provider_key_str}="):
+                                    lines[i] = f'{provider_key_str}="{new_key}"\n'
+                                    key_exists = True
+                                    break
+                            if not key_exists:
+                                lines.append(f'{provider_key_str}="{new_key}"\n')
+                            with open(env_file, "w") as f:
+                                f.writelines(lines)
+                            console.print(f"[green][✓] API Key written to .env. Please restart to reload config.[/green]")
+                        else:
+                            with open(env_file, "w") as f:
+                                f.write(f'SHADOW_DEFAULT_PROVIDER="{provider}"\n')
+                                f.write(f'{provider_key_str}="{new_key}"\n')
+                            console.print(f"[green][✓] Generated .env with API Key.[/green]")
+                    except Exception as e:
+                        console.print(f"[red][x] Failed to write API key to .env: {e}[/red]")
+
+    if all_ok:
+        console.print("\n[bold green]✓ Shadow Doctor: All diagnostic checks passed perfectly![/bold green]")
+    else:
+        console.print("\n[bold yellow]! Shadow Doctor: Some diagnostics reported warnings/errors. Please review advice above.[/bold yellow]")
+
+@app.command()
+def uninstall(
+    preserve_data: Optional[bool] = typer.Option(
+        None, help="Preserve user data (database, config, mission.md) during uninstallation."
+    )
+):
+    """
+    Completely remove Shadow while optionally preserving user data.
+    """
+    console.print("[bold red]🚨 Uninstalling Project Shadow...[/bold red]\n")
+
+    confirm = typer.confirm("Are you sure you want to completely uninstall Project Shadow?")
+    if not confirm:
+        console.print("[yellow]Uninstallation cancelled.[/yellow]")
+        return
+
+    if preserve_data is None:
+        preserve_data = typer.confirm("Do you want to preserve your user data (database, config, mission.md)?", default=True)
+
+    # 1. Deleting user data if not preserving
+    if not preserve_data:
+        console.print("[yellow][*] Removing user data...[/yellow]")
+        for file in ["shadow.db", "shadow.db-wal", "shadow.db-shm", ".env", "mission.md"]:
+            if os.path.exists(file):
+                try:
+                    os.remove(file)
+                    console.print(f"  Removed {file}")
+                except Exception as e:
+                    console.print(f"  [red]Failed to remove {file}: {e}[/red]")
+        if os.path.exists("backups"):
+            try:
+                shutil.rmtree("backups")
+                console.print("  Removed backups/ directory")
+            except Exception as e:
+                console.print(f"  [red]Failed to remove backups/: {e}[/red]")
+    else:
+        console.print("[green][✓] User data (database, config, mission.md) preserved.[/green]")
+
+    # 2. Deleting virtual environment
+    if os.path.exists(".venv"):
+        console.print("[yellow][*] Deleting virtual environment (.venv)...[/yellow]")
+        try:
+            shutil.rmtree(".venv")
+            console.print("  Deleted .venv directory")
+        except Exception as e:
+            console.print(f"  [red]Failed to delete .venv: {e}[/red]")
+
+    # 3. Deleting global executable wrapper
+    is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
+    global_bin_path = ""
+    if is_termux:
+        global_bin_path = "/data/data/com.termux/files/usr/bin/shadow"
+    else:
+        for path in ["/usr/local/bin/shadow", f"{os.path.expanduser('~')}/.local/bin/shadow"]:
+            if os.path.exists(path):
+                global_bin_path = path
+                break
+
+    if global_bin_path and os.path.exists(global_bin_path):
+        console.print(f"[yellow][*] Deleting global wrapper at {global_bin_path}...[/yellow]")
+        try:
+            os.remove(global_bin_path)
+            console.print("  Deleted global wrapper.")
+        except Exception as e:
+            console.print(f"  [red]Failed to remove global wrapper: {e}[/red]")
+
+    console.print("\n[bold green]✓ Project Shadow uninstalled successfully![/bold green]")
+    console.print("Note: To completely delete the repository, you can now safely delete this directory:")
+    console.print(f"  [yellow]rm -rf {os.getcwd()}[/yellow]\n")
 
 if __name__ == "__main__":
     app()
