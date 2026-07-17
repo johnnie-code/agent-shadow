@@ -10,6 +10,8 @@ from shadow.goals.generator import TaskGenerator
 from shadow.goals.priority import priority_engine
 from shadow.goals.executor import execution_engine
 from shadow.goals.reflection import reflection_engine
+from shadow.core.scheduler import scheduler
+from shadow.core.runtime import autonomous_runtime
 
 app = FastAPI(title="Shadow OS Background Server", version="1.0.0")
 
@@ -20,9 +22,31 @@ class ApprovalRequest(BaseModel):
 class QueryRequest(BaseModel):
     queries: List[str]
 
+class MockTelegramMessageRequest(BaseModel):
+    text: str
+    chat_id: Optional[str] = None
+
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     init_db()
+    # Boot periodic background scheduler
+    await scheduler.start()
+    # Boot continuous reasoning loop
+    await autonomous_runtime.start()
+
+    # If Telegram companion has been configured, start bot listener task
+    from shadow.core.telegram import telegram_companion
+    await telegram_companion.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Gracefully stop background scheduler
+    await scheduler.stop()
+    # Gracefully stop reasoning loop
+    await autonomous_runtime.stop()
+
+    from shadow.core.telegram import telegram_companion
+    await telegram_companion.stop()
 
 @app.get("/status")
 def get_status():
@@ -86,6 +110,17 @@ def process_approval_endpoint(approval_id: int, request: ApprovalRequest):
 async def trigger_reflection():
     reflection = await reflection_engine.perform_daily_reflection()
     return {"success": True, "reflection": reflection}
+
+# --- Telegram Mock Endpoint ---
+@app.post("/telegram/mock_message")
+async def process_mock_telegram_message(request: MockTelegramMessageRequest):
+    """
+    Simulate a message sent to the Telegram companion bot.
+    Returns the bot's natural response.
+    """
+    from shadow.core.telegram import telegram_companion
+    reply = await telegram_companion.handle_text_message(request.text, request.chat_id or "test_chat_id")
+    return {"success": True, "reply": reply}
 
 def start_server(port: int = 8000, host: str = "127.0.0.1"):
     uvicorn.run(app, host=host, port=port)
