@@ -102,6 +102,7 @@ fi
 
 # Ensure Python version is >= 3.12
 PYTHON_CMD="python3"
+TERMUX_PY_13=false
 if command -v python3 &>/dev/null; then
     PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
@@ -111,9 +112,14 @@ if command -v python3 &>/dev/null; then
     else
         log_success "Python version verified: $PY_VERSION"
     fi
+    if [ "$IS_TERMUX" = true ] && [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -eq 13 ]; then
+        TERMUX_PY_13=true
+        log_warn "Detected Termux Python 3.13 is active. Compilation of pydantic-core from source must be avoided."
+    fi
 else
-    log_error "Python 3 is not installed or not in PATH."
-    exit 1
+    log_warn "Python 3 is not installed or not in PATH."
+    PY_MAJOR=0
+    PY_MINOR=0
 fi
 
 # 3. Repository Cloning or Syncing
@@ -157,31 +163,175 @@ else
     fi
 fi
 
-# 5. Virtual Environment Creation & Dependencies Installation
-log_header "Creating Python virtual environment ($VENV_DIR)..."
-if [ "$USE_UV" = true ]; then
-    uv venv "$VENV_DIR"
-    log_success "Virtual environment created with uv."
-    log_header "Installing Python dependencies with uv..."
-    if [ "$IS_TERMUX" = true ]; then
-        log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
-        uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
-    else
-        uv pip install --python "$VENV_DIR/bin/python" -e .
+# Helper function to install dependencies
+install_dependencies() {
+    local python_bin=$1
+    local use_uv_tool=$2
+    local force_fallback=$3
+
+    log_header "Installing Python dependencies..."
+    log_warn "Python Binary: $python_bin, UV: $use_uv_tool, Rustless Fallback: $force_fallback"
+
+    # Make sure we use correct pip/python in virtualenv
+    local pip_bin="$VENV_DIR/bin/pip"
+
+    if [ "$force_fallback" = true ]; then
+        log_warn "Applying fallback dependency set (using pure Python pydantic<2 to avoid Rust)..."
+        if [ "$use_uv_tool" = true ]; then
+            uv pip install --python "$VENV_DIR/bin/python" pyyaml fastapi uvicorn rich watchdog httpx typer click python-dotenv "pydantic<2" && \
+            uv pip install --python "$VENV_DIR/bin/python" --no-deps -e .
+        else
+            "$pip_bin" install --upgrade pip && \
+            "$pip_bin" install pyyaml fastapi uvicorn rich watchdog httpx typer click python-dotenv "pydantic<2" && \
+            "$pip_bin" install --no-deps -e .
+        fi
+        return $?
     fi
-else
-    $PYTHON_CMD -m venv "$VENV_DIR"
-    log_success "Virtual environment created with python -m venv."
-    log_header "Installing Python dependencies with pip..."
-    "$VENV_DIR/bin/pip" install --upgrade pip
-    if [ "$IS_TERMUX" = true ]; then
-        log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
-        "$VENV_DIR/bin/pip" install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+
+    if [ "$use_uv_tool" = true ]; then
+        if [ "$IS_TERMUX" = true ]; then
+            log_warn "Termux detected. Attempting install with precompiled wheel index and --only-binary=pydantic-core..."
+            uv pip install --python "$VENV_DIR/bin/python" --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+        else
+            uv pip install --python "$VENV_DIR/bin/python" -e .
+        fi
+        return $?
     else
-        "$VENV_DIR/bin/pip" install -e .
+        "$pip_bin" install --upgrade pip || true
+        if [ "$IS_TERMUX" = true ]; then
+            log_warn "Termux detected. Attempting install with precompiled wheel index and --only-binary=pydantic-core..."
+            "$pip_bin" install --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+        else
+            "$pip_bin" install -e .
+        fi
+        return $?
+    fi
+}
+
+# 5. Virtual Environment Creation & Resilient Dependencies Installation
+log_header "Creating Python virtual environment ($VENV_DIR)..."
+CREATE_VENV_SUCCESS=false
+
+create_virtualenv() {
+    local python_cmd=$1
+    local use_uv_tool=$2
+    log_warn "Attempting to create virtual environment with: $python_cmd (UV: $use_uv_tool)"
+    rm -rf "$VENV_DIR"
+    if [ "$use_uv_tool" = true ]; then
+        uv venv --python "$python_cmd" "$VENV_DIR"
+    else
+        "$python_cmd" -m venv "$VENV_DIR"
+    fi
+}
+
+# Try with default/discovered python cmd first
+if create_virtualenv "$PYTHON_CMD" "$USE_UV"; then
+    CREATE_VENV_SUCCESS=true
+fi
+
+if [ "$CREATE_VENV_SUCCESS" = false ]; then
+    log_warn "Failed to create virtual environment with $PYTHON_CMD. Retrying without uv..."
+    USE_UV=false
+    if create_virtualenv "$PYTHON_CMD" "false"; then
+        CREATE_VENV_SUCCESS=true
     fi
 fi
-log_success "All Python dependencies installed."
+
+if [ "$CREATE_VENV_SUCCESS" = false ]; then
+    log_error "Critical: Unable to create virtual environment."
+    exit 1
+fi
+
+# Attempt initial installation
+INSTALL_LOG="$SHADOW_HOME/logs/install_attempt.log"
+mkdir -p "$(dirname "$INSTALL_LOG")"
+
+log_header "Starting dependency installation..."
+# Run and capture output to log file to inspect and classify error if it fails
+if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "false" > "$INSTALL_LOG" 2>&1; then
+    cat "$INSTALL_LOG"
+    log_success "Dependencies successfully installed on first attempt!"
+else
+    cat "$INSTALL_LOG"
+    log_warn "First installation attempt failed. Classifying error for remediation..."
+
+    # Classify error
+    ERROR_TYPE="unknown"
+    if grep -E -q "Could not find a version that satisfies the requirement|No matching distribution found for pydantic-core|only-binary" "$INSTALL_LOG"; then
+        ERROR_TYPE="pydantic_core_wheel_missing"
+    elif grep -E -q "Connection timed out|Network is unreachable|Could not fetch URL|ConnectionError|Temporary failure in name resolution" "$INSTALL_LOG"; then
+        ERROR_TYPE="network"
+    elif grep -q "Permission denied" "$INSTALL_LOG"; then
+        ERROR_TYPE="permissions"
+    fi
+
+    log_warn "Classified failure type: $ERROR_TYPE"
+
+    REMEDIED=false
+
+    if [ "$ERROR_TYPE" = "network" ]; then
+        log_warn "Network issues detected. Retrying installation with higher timeout and increased retries..."
+        # Wait a moment
+        sleep 3
+        if [ "$USE_UV" = true ]; then
+            # UV retry mechanism
+            if uv pip install --python "$VENV_DIR/bin/python" --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e . ; then
+                REMEDIED=true
+            fi
+        else
+            if "$VENV_DIR/bin/pip" install --retries 10 --timeout 60 --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e . ; then
+                REMEDIED=true
+            fi
+        fi
+    fi
+
+    # Remediation 1: Try installing Python 3.12 inside Termux
+    if [ "$REMEDIED" = false ] && [ "$IS_TERMUX" = true ] && { [ "$ERROR_TYPE" = "pydantic_core_wheel_missing" ] || [ "$TERMUX_PY_13" = true ]; }; then
+        log_warn "Compatible pydantic-core wheel is unavailable or Termux Python 3.13 requires a precompiled fallback."
+        log_warn "Attempting to install Python 3.12 from Termux User Repository (TUR)..."
+
+        # Keep track if we succeed
+        PY_12_INSTALLED=false
+        # Install tur-repo and python3.12
+        if pkg install tur-repo -y && pkg update -y && pkg install python3.12 -y; then
+            PY_12_INSTALLED=true
+        elif apt-get install tur-repo -y && apt-get update -y && apt-get install python3.12 -y; then
+            PY_12_INSTALLED=true
+        fi
+
+        if [ "$PY_12_INSTALLED" = true ] && command -v python3.12 &>/dev/null; then
+            log_success "Python 3.12 successfully installed in Termux!"
+            PYTHON_CMD="python3.12"
+
+            # Recreate venv with Python 3.12
+            log_header "Re-creating virtual environment with Python 3.12..."
+            if create_virtualenv "python3.12" "$USE_UV"; then
+                if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "false"; then
+                    log_success "Successfully installed all dependencies under Python 3.12 environment!"
+                    REMEDIED=true
+                fi
+            fi
+        else
+            log_warn "Failed to install Python 3.12 from TUR."
+        fi
+    fi
+
+    # Remediation 2: Graceful fallback to pure-Python/non-Rust dependency set
+    if [ "$REMEDIED" = false ]; then
+        log_warn "All standard installation paths exhausted. Triggering ultimate graceful fallback to alternative rust-less dependency set..."
+        if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "true"; then
+            log_success "Successfully installed alternative pure-Python (Pydantic v1) dependency set!"
+            REMEDIED=true
+        else
+            log_error "Graceful fallback installation failed."
+        fi
+    fi
+
+    if [ "$REMEDIED" = false ]; then
+        log_error "Installation failed after attempting all recovery and remediation paths."
+        exit 1
+    fi
+fi
 
 # 6. Validate Dependencies After Installation
 log_header "Validating installed Python dependencies..."

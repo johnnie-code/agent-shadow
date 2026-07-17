@@ -11,9 +11,13 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def setup_test_db():
+    from shadow.core.config import reset_config
+    reset_config(None)
     init_db()
 
 def test_doctor_command():
+    from shadow.core.config import reset_config
+    reset_config(None)
     # Test shadow doctor execution
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
