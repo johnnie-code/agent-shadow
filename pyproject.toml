@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shadow-os"
+version = "1.0.0"
+description = "PROJECT SHADOW — Autonomous Goal-Driven Agent Operating System for Android (Termux)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Shadow AI Systems Architect" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Android",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "rich>=13.0.0",
+    "watchdog>=3.0.0",
+    "httpx>=0.24.0",
+    "typer>=0.9.0"
+]
+
+[project.scripts]
+shadow = "shadow.cli.main:app"
