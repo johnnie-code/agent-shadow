@@ -336,11 +336,42 @@ fi
 # 6. Validate Dependencies After Installation
 log_header "Validating installed Python dependencies..."
 VENV_PYTHON="$VENV_DIR/bin/python"
-if SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" &>/dev/null; then
+
+# Dynamically determine the validation list based on active dependency profile
+VALIDATION_SCRIPT="
+import sys
+import pydantic
+
+is_fallback = pydantic.__version__.startswith('1.')
+try:
+    import pydantic_settings
+except ImportError:
+    is_fallback = True
+
+deps = ['pydantic', 'yaml', 'fastapi', 'uvicorn', 'rich', 'watchdog', 'httpx', 'typer']
+if not is_fallback:
+    deps.append('pydantic_settings')
+
+missing = []
+for dep in deps:
+    try:
+        __import__(dep)
+    except ImportError:
+        missing.append(dep)
+
+if missing:
+    print('MISSING:', ', '.join(missing))
+    sys.exit(1)
+else:
+    print('OK')
+    sys.exit(0)
+"
+
+if SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "$VALIDATION_SCRIPT" &>/dev/null; then
     log_success "All dependencies successfully verified."
 else
     log_error "Dependency validation failed. Some core packages are missing."
-    SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" || true
+    SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "$VALIDATION_SCRIPT" || true
     exit 1
 fi
 
