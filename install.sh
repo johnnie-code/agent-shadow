@@ -60,15 +60,27 @@ log_success "Directory structure created at $SHADOW_HOME/"
 # 1. Detect Termux / Android environment
 log_header "Detecting environment and compatibility..."
 IS_TERMUX=false
+IS_ANDROID=false
+FORCE_FALLBACK=false
+
 if [ -d "/data/data/com.termux/files/usr" ] || [ -n "$TERMUX_VERSION" ]; then
     IS_TERMUX=true
+    IS_ANDROID=true
     log_success "Termux detected."
+elif [ -n "$ANDROID_ROOT" ] || [ -n "$ANDROID_DATA" ]; then
+    IS_ANDROID=true
+    log_success "Android Python environment detected."
 else
-    log_warn "Standard Linux/macOS environment detected (not Termux)."
+    log_warn "Standard Linux/macOS/Windows environment detected."
+fi
+
+if [ "$IS_ANDROID" = true ]; then
+    FORCE_FALLBACK=true
+    log_warn "Android compatibility mode activated. Instantly selected Android compatible dependency profile to avoid compilation of rust binary dependencies (pydantic-core, maturin)."
 fi
 
 # Verify Android compatibility
-if [ "$IS_TERMUX" = true ]; then
+if [ "$IS_ANDROID" = true ]; then
     OS_ARCH=$(uname -m)
     log_success "Android OS Architecture: $OS_ARCH"
 else
@@ -248,7 +260,7 @@ mkdir -p "$(dirname "$INSTALL_LOG")"
 
 log_header "Starting dependency installation..."
 # Run and capture output to log file to inspect and classify error if it fails
-if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "false" > "$INSTALL_LOG" 2>&1; then
+if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "$FORCE_FALLBACK" > "$INSTALL_LOG" 2>&1; then
     cat "$INSTALL_LOG"
     log_success "Dependencies successfully installed on first attempt!"
 else
@@ -306,7 +318,7 @@ else
             # Recreate venv with Python 3.12
             log_header "Re-creating virtual environment with Python 3.12..."
             if create_virtualenv "python3.12" "$USE_UV"; then
-                if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "false"; then
+                if install_dependencies "$VENV_DIR/bin/python" "$USE_UV" "$FORCE_FALLBACK"; then
                     log_success "Successfully installed all dependencies under Python 3.12 environment!"
                     REMEDIED=true
                 fi
@@ -597,3 +609,34 @@ echo -e "  ${GREEN}shadow doctor${NC} - Diagnose and repair installation issues"
 echo -e "  ${GREEN}shadow tui${NC}    - Launch the Rich Dashboard interface"
 echo "--------------------------------------------------------"
 echo -e "${BLUE}Have an outstanding journey with your Autonomous Chief of Staff!${NC}\n"
+
+# 16. Automatic Onboarding and Background Daemon/Runtime Start
+ONBOARDING_COMPLETED=false
+if [ -f "$SHADOW_HOME/shadow.db" ]; then
+    if SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/python" -c "
+from shadow.core.database import init_db
+from shadow.memory.memory import memory_engine
+init_db()
+mem = memory_engine.get_memory_by_key('onboarding_completed')
+if mem and mem.get('content') == 'true':
+    import sys
+    sys.exit(0)
+else:
+    import sys
+    sys.exit(1)
+" &>/dev/null; then
+        ONBOARDING_COMPLETED=true
+    fi
+fi
+
+if [ "$ONBOARDING_COMPLETED" = false ]; then
+    log_header "Booting Interactive Onboarding Experience..."
+    SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/shadow" onboard
+fi
+
+# Automatically start the background daemon and runtime
+log_header "Starting background daemon and autonomous runtime loop..."
+SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/shadow" daemon stop &>/dev/null || true
+SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/shadow" daemon start
+
+log_success "All systems are GO. Background daemon, autonomous scheduler, and runtime are now fully active."

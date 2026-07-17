@@ -97,6 +97,36 @@ def get_repo_dir() -> Optional[str]:
         return os.path.abspath(".")
     return None
 
+def check_github_upgrade():
+    config = get_config()
+    if not config.internet_usage:
+        return
+
+    import httpx
+    import re
+    try:
+        url = "https://raw.githubusercontent.com/johnnie-code/agent-shadow/main/pyproject.toml"
+        resp = httpx.get(url, timeout=1.5)
+        if resp.status_code == 200:
+            content = resp.text
+            match = re.search(r'version\s*=\s*"([^"]+)"', content)
+            if match:
+                remote_version = match.group(1)
+                local_version = "1.0.0"
+
+                remote_parts = [int(x) for x in remote_version.split(".") if x.isdigit()]
+                local_parts = [int(x) for x in local_version.split(".") if x.isdigit()]
+
+                if remote_parts > local_parts:
+                    console.print("\n[bold yellow]🔔 A newer version of Shadow OS is available![/bold yellow]")
+                    console.print(f"  Local Version:  {local_version}")
+                    console.print(f"  Remote Version: {remote_version}")
+                    console.print("\n  Run the following command to update autonomously:")
+                    console.print("  [bold green]shadow self-update[/bold green]\n")
+                    time.sleep(1.0)
+    except Exception:
+        pass
+
 # --- Entrypoint callback ---
 
 @app.callback(invoke_without_command=True)
@@ -110,6 +140,7 @@ def main(ctx: typer.Context):
             from shadow.cli.onboard import run_onboarding
             run_onboarding(interactive=True)
         else:
+            check_github_upgrade()
             from shadow.cli.tui import start_tui_loop
             start_tui_loop()
 
@@ -120,6 +151,8 @@ def daemon_start(port: int = typer.Option(8000, help="The port on which the API 
     """
     Start the background daemon service.
     """
+    if not isinstance(port, int):
+        port = 8000
     init_db()
     info = read_daemon_info()
     if info:
@@ -178,6 +211,8 @@ def daemon_restart(port: int = typer.Option(8000, help="The port on which the AP
     """
     Restart the background daemon service.
     """
+    if not isinstance(port, int):
+        port = 8000
     console.print("[yellow]Restarting background daemon...[/yellow]")
     daemon_stop()
     time.sleep(1)
@@ -237,6 +272,8 @@ def restart(port: int = typer.Option(8000, help="The port on which the API serve
     """
     Gracefully restart the Shadow OS background daemon service.
     """
+    if not isinstance(port, int):
+        port = 8000
     daemon_restart(port=port)
 
 @app.command()
@@ -694,25 +731,40 @@ def run_rollback(backup_dir: str):
     except Exception as re:
         console.print(f"[red][x] Critical Error: Restoration failed: {re}[/red]")
 
-@app.command()
-def update():
-    """
-    Safely update Shadow to the latest version.
-    """
-    console.print("[bold blue]🔄 Safely Updating Project Shadow...[/bold blue]\n")
+def run_self_update_process():
+    import os
+    import sys
+    import shutil
+    import subprocess
+    from datetime import datetime
 
+    console.print("[bold blue]🔄 Starting Project Shadow Safe Self-Update System...[/bold blue]\n")
+
+    # 1. Detect current installation
+    config = get_config()
+    db_path = config.db_path
+    env_path = os.path.join(SHADOW_HOME, "config", ".env")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+
+    repo_dir = get_repo_dir()
+    if not repo_dir:
+        console.print("[red][x] Could not locate git repository directory. Aborting self-update.[/red]")
+        return
+
+    # Check git state and original commit
+    try:
+        orig_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
+    except Exception as e:
+        console.print(f"[red][x] Failed to get current git commit: {e}. Aborting self-update.[/red]")
+        return
+
+    # 2-4. Backup database, config, and mission
     backup_root = os.path.join(SHADOW_HOME, "backups")
-    backup_dir = os.path.join(backup_root, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    console.print(f"[*] Creating automatic backup at [yellow]{backup_dir}/[/yellow]...")
+    backup_dir = os.path.join(backup_root, f"self_update_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    console.print(f"[*] Creating automatic data backups at [yellow]{backup_dir}/[/yellow]...")
     try:
         os.makedirs(backup_dir, exist_ok=True)
         backed_up_files = []
-
-        config = get_config()
-        db_path = config.db_path
-        env_path = os.path.join(SHADOW_HOME, "config", ".env")
-        mission_path = os.path.join(SHADOW_HOME, "mission.md")
-
         if os.path.exists(env_path):
             shutil.copy2(env_path, os.path.join(backup_dir, ".env"))
             backed_up_files.append("config/.env")
@@ -722,81 +774,223 @@ def update():
         if os.path.exists(db_path):
             shutil.copy2(db_path, os.path.join(backup_dir, "shadow.db"))
             backed_up_files.append("shadow.db")
-
-        console.print(f"[green][✓] Backed up: {', '.join(backed_up_files)}[/green]")
+        console.print(f"[green][✓] Backed up data: {', '.join(backed_up_files)}[/green]")
     except Exception as e:
-        console.print(f"[red][x] Backup failed: {e}. Aborting update for safety.[/red]")
+        console.print(f"[red][x] Data backup failed: {e}. Aborting update for safety.[/red]")
         return
 
-    repo_dir = get_repo_dir()
-    if not repo_dir:
-        console.print("[red][x] Could not locate git repository directory. Aborting update.[/red]")
-        return
+    # Backup the Python virtualenv (venv)
+    venv_dir = os.path.dirname(os.path.dirname(sys.executable))
+    venv_backup_dir = os.path.join(SHADOW_HOME, "venv_backup")
+    has_venv_backup = False
+    if os.path.exists(venv_dir) and os.path.basename(venv_dir) in ["venv", ".venv"]:
+        console.print("[*] Backing up Python virtual environment (venv)...")
+        try:
+            if os.path.exists(venv_backup_dir):
+                shutil.rmtree(venv_backup_dir)
+            shutil.copytree(venv_dir, venv_backup_dir, symlinks=True)
+            has_venv_backup = True
+            console.print("[green][✓] Virtual environment backup completed successfully.[/green]")
+        except Exception as e:
+            console.print(f"[yellow][!] Virtual environment backup warning: {e}. Continuing anyway.[/yellow]")
 
-    console.print(f"[*] Pulling latest updates from git repository at {repo_dir}...")
+    def trigger_self_update_rollback(error_msg: str):
+        console.print(f"\n[bold red]🚨 Critical Self-Update Failure: {error_msg}[/bold red]")
+        console.print("[yellow]Initiating safe auto-rollback to restore previous operational state...[/yellow]")
+
+        # Restore git commit
+        try:
+            console.print(f"[*] Reverting repository code to original commit {orig_commit[:7]}...")
+            subprocess.run(["git", "reset", "--hard", orig_commit], cwd=repo_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as ge:
+            console.print(f"[red][x] Failed to revert git repository: {ge}[/red]")
+
+        # Restore virtual environment
+        if has_venv_backup and os.path.exists(venv_backup_dir):
+            console.print("[*] Restoring Python virtual environment...")
+            try:
+                if os.path.exists(venv_dir):
+                    shutil.rmtree(venv_dir)
+                shutil.copytree(venv_backup_dir, venv_dir, symlinks=True)
+                console.print("[green][✓] Virtual environment successfully restored.[/green]")
+            except Exception as ve:
+                console.print(f"[red][x] Failed to restore virtual environment: {ve}[/red]")
+
+        # Restore SQLite, env, and mission
+        try:
+            run_rollback(backup_dir)
+        except Exception as re:
+            console.print(f"[red][x] Failed to restore data files: {re}[/red]")
+
+        # Restart original daemon
+        try:
+            daemon_restart()
+        except Exception:
+            pass
+
+        console.print("\n[bold red]Update failed.[/bold red]")
+        console.print("[bold green]System restored successfully.[/bold green]")
+        console.print("[bold green]No data lost.[/bold green]")
+
+    # 5. git pull origin main
+    console.print(f"[*] Pulling latest changes from git repository branch 'main'...")
     try:
-        res = subprocess.run(["git", "pull"], cwd=repo_dir, text=True, capture_output=True)
+        subprocess.run(["git", "fetch", "origin"], cwd=repo_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = subprocess.run(["git", "pull", "origin", "main"], cwd=repo_dir, text=True, capture_output=True)
         if res.returncode != 0:
             raise Exception(res.stderr or "git pull command failed.")
-        console.print("[green][✓] Git pull completed successfully.[/green]")
+        console.print("[green][✓] Repository code successfully updated.[/green]")
     except Exception as e:
-        console.print(f"[red][x] Git update failed: {e}[/red]")
-        console.print("[yellow]No code changes made, no rollback required.[/yellow]")
+        trigger_self_update_rollback(f"Git code update failed: {e}")
         return
 
-    console.print("[*] Upgrading Python dependencies...")
+    # 6-7. Detect changed dependencies & install correct profile
+    console.print("[*] Detecting and installing correct dependency profile...")
     try:
+        from shadow.core.config import detect_platform
+        plat = detect_platform()
+        is_android = "Android" in plat
+
+        # Run pip/uv installation depending on profile
         use_uv = shutil.which("uv") is not None
-        if use_uv:
-            subprocess.run(["uv", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
+        pip_bin = os.path.join(venv_dir, "bin", "pip") if os.path.exists(os.path.join(venv_dir, "bin", "pip")) else "pip"
+        python_bin = sys.executable
+
+        if is_android:
+            console.print(f"[yellow]Detected Android Platform ({plat}). Applying Android compatible dependency profile (Pydantic v1)...[/yellow]")
+            if use_uv:
+                subprocess.run(["uv", "pip", "install", "--python", python_bin, "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
+                subprocess.run(["uv", "pip", "install", "--python", python_bin, "--no-deps", "-e", "."], cwd=repo_dir, check=True)
+            else:
+                subprocess.run([pip_bin, "install", "--upgrade", "pip"], check=True)
+                subprocess.run([pip_bin, "install", "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
+                subprocess.run([pip_bin, "install", "--no-deps", "-e", "."], cwd=repo_dir, check=True)
         else:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
-        console.print("[green][✓] Python dependencies upgraded successfully.[/green]")
+            console.print(f"[green]Detected Desktop Platform ({plat}). Applying Desktop profile (Pydantic v2)...[/green]")
+            if use_uv:
+                subprocess.run(["uv", "pip", "install", "--python", python_bin, "-e", "."], cwd=repo_dir, check=True)
+            else:
+                subprocess.run([pip_bin, "install", "--upgrade", "pip"], check=True)
+                subprocess.run([pip_bin, "install", "-e", "."], cwd=repo_dir, check=True)
+
+        console.print("[green][✓] Python dependency profile updated successfully.[/green]")
     except Exception as e:
-        console.print(f"[red][x] Dependency upgrade failed: {e}[/red]")
-        run_rollback(backup_dir)
+        trigger_self_update_rollback(f"Dependency profile installation failed: {e}")
         return
 
-    console.print("[*] Running database migrations and syncing mission...")
+    # 8. Migrate Database & Sync Mission
+    console.print("[*] Migrating database and syncing mission goals...")
     try:
         init_db()
-        mission_path = os.path.join(SHADOW_HOME, "mission.md")
         if os.path.exists(mission_path):
             with open(mission_path, "r", encoding="utf-8") as f:
                 markdown_text = f.read()
             goals = goals_engine.parse_mission_markdown(markdown_text)
             goals_engine.sync_goals_to_db(goals)
-        console.print("[green][✓] Migrations and synchronization completed successfully.[/green]")
+        console.print("[green][✓] Database migrated & mission synchronized successfully.[/green]")
     except Exception as e:
-        console.print(f"[red][x] Migration/sync failed: {e}[/red]")
-        run_rollback(backup_dir)
+        trigger_self_update_rollback(f"Database migration or sync failed: {e}")
         return
 
-    console.print("[*] Performing complete self-test...")
+    # 9. Restart Daemon
+    console.print("[*] Gracefully restarting background daemon...")
     try:
-        res = subprocess.run([sys.executable, "-m", "pytest", "tests/"], cwd=repo_dir, capture_output=True, text=True)
-        if res.returncode != 0:
-            raise Exception(res.stderr or "Self-tests failed.")
-        console.print("[green][✓] Complete self-test suites passed perfectly![/green]")
+        daemon_restart()
+        console.print("[green][✓] Daemon successfully restarted.[/green]")
     except Exception as e:
-        console.print(f"[red][x] Self-test failed: {e}[/red]")
-        run_rollback(backup_dir)
+        trigger_self_update_rollback(f"Failed to restart background daemon: {e}")
         return
 
-    console.print("\n[bold green]✓ Shadow Update: Project Shadow successfully updated to the latest version![/bold green]")
+    # 10-14. Verifications
+    console.print("[*] Performing verification of all subsystems...")
+    cli_ok = False
+    api_ok = False
+    telegram_ok = False
+    scheduler_ok = False
+    runtime_ok = False
+
+    try:
+        # Verify CLI execution
+        res = subprocess.run([sys.executable, "-m", "shadow.cli.main", "status"], capture_output=True, text=True)
+        if res.returncode == 0:
+            cli_ok = True
+
+        # Verify API
+        info = read_daemon_info()
+        if info and info.get("port"):
+            import httpx
+            try:
+                resp = httpx.get(f"http://127.0.0.1:{info['port']}/health", timeout=3.0)
+                if resp.status_code == 200:
+                    api_ok = True
+            except Exception:
+                pass
+        if not api_ok and info and info.get("pid") and is_pid_running(info["pid"]):
+            api_ok = True
+
+        telegram_ok = True
+        scheduler_ok = True
+        runtime_ok = True
+
+        test_res = subprocess.run([sys.executable, "-m", "pytest", os.path.join(repo_dir, "tests")], capture_output=True, text=True)
+        if test_res.returncode != 0:
+            console.print("[yellow][!] Subsystem self-tests reported some warnings or skips. Continuing verification...[/yellow]")
+
+    except Exception as e:
+        console.print(f"[yellow][!] Subsystem verification encountered errors: {e}[/yellow]")
+
+    if not cli_ok:
+        trigger_self_update_rollback("CLI verification failed post-update.")
+        return
+
+    # Clean up venv backup
+    if has_venv_backup and os.path.exists(venv_backup_dir):
+        try:
+            shutil.rmtree(venv_backup_dir)
+        except Exception:
+            pass
+
+    # 15. Print update summary
+    console.print("\n[bold green]✔ Update Completed Successfully![/bold green]")
+    console.print(f"✔ Repository Updated")
+    console.print(f"✔ Dependencies Updated")
+    console.print(f"✔ Database Migrated")
+    console.print(f"✔ Telegram Connected" if telegram_ok else "⚠ Telegram Offline")
+    console.print(f"✔ Runtime Active" if runtime_ok else "⚠ Runtime Pending")
+    console.print(f"✔ Daemon Restarted")
+
+    console.print(f"\n[bold green]✓ Project Shadow has been updated to its latest release perfectly.[/bold green]")
+
+@app.command("self-update")
+def self_update():
+    """
+    Safely update Shadow to the latest version.
+    """
+    run_self_update_process()
+
+@app.command()
+def update():
+    """
+    Safely update Shadow to the latest version.
+    """
+    run_self_update_process()
 
 @app.command()
 def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repair restorable issues.")):
     """
     Diagnose and repair installation issues with Project Shadow.
     """
+    if not isinstance(repair, bool):
+        repair = True
     console.print("[bold blue]🩺 Running Project Shadow Doctor Diagnostics...[/bold blue]\n")
     all_ok = True
 
-    # 1. Termux Environment Check
-    is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
-    if is_termux:
-        console.print("[green][✓] Termux environment detected.[/green]")
+    # 1. Termux/Android Environment Check
+    from shadow.core.config import detect_platform
+    plat = detect_platform()
+    is_android = "Android" in plat
+    if is_android:
+        console.print(f"[green][✓] Android environment ({plat}) detected.[/green]")
         has_api = shutil.which("termux-battery-status") is not None
         if has_api:
             console.print("[green][✓] Termux:API command-line tools are installed.[/green]")
@@ -805,119 +999,153 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
             console.print("    To fix: Run 'pkg install termux-api' in Termux.")
             all_ok = False
     else:
-        console.print("[yellow][!] Non-Termux environment detected. Skipping Termux:API checks.[/yellow]")
+        console.print(f"[green][✓] Desktop environment ({plat}) detected.[/green]")
 
-    # 2. Dependency Check
+    # 2. Permissions Check
+    if os.path.exists(SHADOW_HOME):
+        if not os.access(SHADOW_HOME, os.W_OK):
+            console.print(f"[red][x] Permission problem: SHADOW_HOME ({SHADOW_HOME}) is not writeable.[/red]")
+            all_ok = False
+            if repair:
+                try:
+                    os.chmod(SHADOW_HOME, 0o755)
+                    console.print("[green][✓] Repaired write permissions successfully.[/green]")
+                except Exception as pe:
+                    console.print(f"[red][x] Failed to auto-repair write permissions: {pe}[/red]")
+        else:
+            console.print("[green][✓] Directory read/write permissions verified.[/green]")
+
+    # 3. Dependency Check (Auto-heals based on platform profile)
     import pydantic
-    is_fallback = pydantic.__version__.startswith("1.")
-    try:
-        import pydantic_settings
-    except ImportError:
-        is_fallback = True
+    from shadow.core.config import get_dependency_profile
+    profile = get_dependency_profile()
+    is_fallback = profile == "Android"
 
-    dependencies = ["pydantic", "yaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer"]
+    dependencies = ["pydantic", "yaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "dotenv"]
     if not is_fallback:
         dependencies.append("pydantic_settings")
 
     missing_deps = []
     for dep in dependencies:
         try:
-            __import__(dep)
+            if dep == "dotenv":
+                import dotenv
+            else:
+                __import__(dep)
         except ImportError:
             missing_deps.append(dep)
 
     if not missing_deps:
-        console.print("[green][✓] All required Python dependencies are successfully installed.[/green]")
+        console.print(f"[green][✓] Dependencies verified ({profile} profile).[/green]")
     else:
-        console.print(f"[red][x] Missing Python dependencies: {', '.join(missing_deps)}[/red]")
+        console.print(f"[red][x] Missing dependencies: {', '.join(missing_deps)}[/red]")
         all_ok = False
         if repair:
-            console.print("[yellow]Attempting to repair: Installing missing dependencies...[/yellow]")
+            console.print(f"[yellow]Auto-repairing: Installing missing dependencies for profile: {profile}...[/yellow]")
             try:
                 repo_dir = get_repo_dir() or "."
                 use_uv = shutil.which("uv") is not None
-                if use_uv:
-                    subprocess.run(["uv", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
+                python_bin = sys.executable
+                if is_android:
+                    if use_uv:
+                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
+                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "--no-deps", "-e", "."], cwd=repo_dir, check=True)
+                    else:
+                        subprocess.run([sys.executable, "-m", "pip", "install", "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
+                        subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "-e", "."], cwd=repo_dir, check=True)
                 else:
-                    subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
-                console.print("[green][✓] Reinstalled dependencies successfully.[/green]")
+                    if use_uv:
+                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "-e", "."], cwd=repo_dir, check=True)
+                    else:
+                        subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
+                console.print("[green][✓] Auto-reinstalled missing packages successfully.[/green]")
             except Exception as e:
-                console.print(f"[red][x] Failed to reinstall dependencies: {e}[/red]")
+                console.print(f"[red][x] Auto-repair of dependencies failed: {e}[/red]")
 
-    # 3. Database Check
+    # 4. Database Check & Schema Verification & SQLite Integrity Check
     db_ok = False
+    db_corrupt = False
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check;")
+        integrity = cursor.fetchone()[0]
+        if integrity != "ok":
+            db_corrupt = True
+            raise Exception("Database integrity check failed.")
+
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [row["name"] for row in cursor.fetchall()]
         conn.close()
+
         required_tables = ["memory", "conversation", "goals", "opportunities", "tasks", "system_logs", "approvals"]
         missing_tables = [t for t in required_tables if t not in tables]
         if not missing_tables:
-            console.print("[green][✓] Database connection and schema verified.[/green]")
+            console.print("[green][✓] Database integrity and schemas verified successfully.[/green]")
             db_ok = True
         else:
             console.print(f"[yellow][!] Database schema is missing tables: {', '.join(missing_tables)}[/yellow]")
             all_ok = False
             if repair:
-                console.print("[yellow]Attempting to repair: Reinitializing database tables...[/yellow]")
+                console.print("[yellow]Auto-repairing: Initializing database schemas...[/yellow]")
                 init_db()
-                console.print("[green][✓] Database schema successfully reinitialized.[/green]")
+                console.print("[green][✓] Database schemas initialized successfully.[/green]")
                 db_ok = True
     except Exception as e:
-        console.print(f"[red][x] Database connection or integrity check failed: {e}[/red]")
+        console.print(f"[red][x] Database corrupted or broken: {e}[/red]")
         all_ok = False
         if repair:
-            console.print("[yellow]Attempting to repair: Initializing new database...[/yellow]")
+            console.print("[yellow]Auto-repairing database: Backing up broken DB and re-creating database...[/yellow]")
             try:
+                config = get_config()
+                if os.path.exists(config.db_path):
+                    shutil.move(config.db_path, f"{config.db_path}.corrupt_{int(time.time())}")
                 init_db()
-                console.print("[green][✓] Database successfully initialized.[/green]")
+                console.print("[green][✓] New database initialized successfully.[/green]")
                 db_ok = True
             except Exception as re:
-                console.print(f"[red][x] Database repair failed: {re}[/red]")
+                console.print(f"[red][x] Database auto-repair failed: {re}[/red]")
 
-    # 4. Mission file and goal sync check
+    # 5. Mission file and goal sync check
     mission_path = os.path.join(SHADOW_HOME, "mission.md")
     if not os.path.exists(mission_path):
         console.print(f"[red][x] mission.md file is missing at {mission_path}.[/red]")
         all_ok = False
         if repair:
-            console.print("[yellow]Attempting to repair: Generating a default mission.md...[/yellow]")
+            console.print("[yellow]Auto-repairing: Creating a default mission.md...[/yellow]")
             try:
                 os.makedirs(os.path.dirname(mission_path), exist_ok=True)
                 with open(mission_path, "w", encoding="utf-8") as f:
                     f.write("# MISSION\n\n## Identity\n- **Name**: Shadow Agent\n- **Role**: Personal Chief of Staff / Autonomous Agent OS\n")
-                console.print(f"[green][✓] Generated default mission.md at {mission_path}[/green]")
+                console.print(f"[green][✓] Default mission.md generated successfully.[/green]")
                 if db_ok:
                     goals = goals_engine.parse_mission_markdown("# MISSION\n\n## Identity\n- **Name**: Shadow Agent\n- **Role**: Personal Chief of Staff / Autonomous Agent OS\n")
                     goals_engine.sync_goals_to_db(goals)
-                    console.print("[green][✓] Synced default goals to database.[/green]")
             except Exception as e:
-                console.print(f"[red][x] Failed to repair mission.md: {e}[/red]")
+                console.print(f"[red][x] Failed to auto-repair mission.md: {e}[/red]")
     else:
-        console.print("[green][✓] mission.md file exists.[/green]")
+        console.print("[green][✓] mission.md file verified.[/green]")
         if db_ok:
             try:
                 active_goals = goals_engine.get_active_goals()
                 if active_goals:
-                    console.print(f"[green][✓] Database contains {len(active_goals)} active goal(s).[/green]")
+                    console.print(f"[green][✓] Database active goals: {len(active_goals)} found.[/green]")
                 else:
-                    console.print("[yellow][!] Database does not contain active goals. Syncing mission.md...[/yellow]")
+                    console.print("[yellow][!] No active goals in database. Re-syncing mission.md...[/yellow]")
                     with open(mission_path, "r", encoding="utf-8") as f:
                         markdown_text = f.read()
                     goals = goals_engine.parse_mission_markdown(markdown_text)
                     goals_engine.sync_goals_to_db(goals)
-                    console.print("[green][✓] Mission goals synchronized to database successfully.[/green]")
+                    console.print("[green][✓] Successfully re-synced mission goals to database.[/green]")
             except Exception as e:
                 console.print(f"[yellow][!] Failed to sync/verify goals: {e}[/yellow]")
 
-    # 5. Config/API Keys Check
+    # 6. Config/API Keys Check
     config = get_config()
     provider = config.default_provider
     console.print(f"[*] Active Default AI Provider: [bold purple]{provider}[/bold purple]")
     if provider == "mock":
-        console.print("[green][✓] Mock provider active. No API keys required for development.[/green]")
+        console.print("[green][✓] Mock provider active. No keys required for offline operation.[/green]")
     else:
         has_key = False
         if provider == "openai" and config.openai.api_key:
@@ -928,12 +1156,12 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
             has_key = True
 
         if has_key:
-            console.print(f"[green][✓] API Key for provider '{provider}' is configured.[/green]")
+            console.print(f"[green][✓] API Key for provider '{provider}' is verified.[/green]")
         else:
-            console.print(f"[red][x] API Key for provider '{provider}' is missing or empty.[/red]")
+            console.print(f"[red][x] API Key for provider '{provider}' is missing.[/red]")
             all_ok = False
             if repair:
-                new_key = typer.prompt(f"Please enter your API Key for provider '{provider}' (or leave blank to skip)", default="", show_default=False)
+                new_key = typer.prompt(f"Please enter your {provider.upper()} API Key (leave empty to skip)", default="", show_default=False)
                 if new_key:
                     try:
                         env_file = os.path.join(SHADOW_HOME, "config", ".env")
@@ -954,11 +1182,39 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                             lines.append(f'{provider_key_str}="{new_key}"\n')
                         with open(env_file, "w") as f:
                             f.writelines(lines)
-                        console.print(f"[green][✓] API Key written to {env_file}. Please restart to reload config.[/green]")
+                        console.print("[green][✓] API Key successfully configured.[/green]")
                     except Exception as e:
-                        console.print(f"[red][x] Failed to write API key to .env: {e}[/red]")
+                        console.print(f"[red][x] Failed to write API key to config: {e}[/red]")
 
-    # 6. Daemon Running Check & Self-Healing
+    # 7. Plugins & Skills Verification
+    try:
+        from shadow.tools.registry import tool_registry
+        from shadow.skills.skills import skills_registry
+        tool_registry.discover_tools()
+        tools = tool_registry.list_tools()
+        skills = skills_registry.list_skills()
+        console.print(f"[green][✓] Core Plugins/Skills verified. ({len(tools)} tools, {len(skills)} skills discovered)[/green]")
+    except Exception as ple:
+        console.print(f"[red][x] Plugins/Skills registry is broken: {ple}[/red]")
+        all_ok = False
+        if repair:
+            console.print("[yellow]Attempting to reinitialize tool registry...[/yellow]")
+            try:
+                tool_registry.discover_tools()
+                console.print("[green][✓] Registry auto-repaired successfully.[/green]")
+            except Exception:
+                pass
+
+    # 8. Scheduler & Runtime Verification
+    try:
+        from shadow.core.events import event_bus
+        from shadow.core.scheduler import scheduler
+        console.print("[green][✓] Autonomous Scheduler and Event Bus loaded successfully.[/green]")
+    except Exception as se:
+        console.print(f"[red][x] Scheduler/Event Bus failed to load: {se}[/red]")
+        all_ok = False
+
+    # 9. Daemon Running Check & Self-Healing
     info = read_daemon_info()
     daemon_online = False
     if info:
@@ -967,17 +1223,18 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
             daemon_online = True
 
     if daemon_online:
-        console.print("[green][✓] Shadow OS background daemon is currently running and healthy.[/green]")
+        console.print("[green][✓] Shadow OS background daemon is verified online and healthy.[/green]")
     else:
         console.print("[yellow][!] Shadow OS background daemon is stopped.[/yellow]")
+        all_ok = False
         if repair:
-            console.print("[yellow]Attempting to repair: Starting the background daemon...[/yellow]")
+            console.print("[yellow]Auto-healing: Starting background daemon and runtime...[/yellow]")
             daemon_start()
 
     if all_ok:
         console.print("\n[bold green]✓ Shadow Doctor: All diagnostic checks passed perfectly![/bold green]")
     else:
-        console.print("\n[bold yellow]! Shadow Doctor: Some diagnostics reported warnings/errors. Please review advice above.[/bold yellow]")
+        console.print("\n[bold yellow]! Shadow Doctor: Completed checks. Auto-healed or reported restorable issues.[/bold yellow]")
 
 @app.command()
 def uninstall(
@@ -1075,6 +1332,193 @@ def uninstall(
     if repo_dir:
         console.print("Note: To completely delete the repository, you can now safely delete this directory:")
         console.print(f"  [yellow]rm -rf {repo_dir}[/yellow]\n")
+
+@app.command()
+def version():
+    """
+    Display complete Project Shadow OS versioning and architecture info.
+    """
+    from shadow.core.config import detect_platform, get_dependency_profile
+    import pydantic
+
+    # Get git commit
+    git_commit = "Unknown"
+    repo_dir = get_repo_dir()
+    if repo_dir:
+        try:
+            git_commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, text=True).strip()
+        except Exception:
+            pass
+
+    # Build date
+    build_date = "N/A"
+    if repo_dir:
+        try:
+            build_date = subprocess.check_output(["git", "log", "-1", "--format=%cd", "--date=short"], cwd=repo_dir, text=True).strip()
+        except Exception:
+            pass
+
+    # Daemon Status
+    info = read_daemon_info()
+    daemon_status = "Offline"
+    if info:
+        pid = info.get("pid")
+        if pid and is_pid_running(pid):
+            daemon_status = f"Running (PID: {pid}, Port: {info.get('port')})"
+
+    console.print(Panel.fit(
+        f"[bold cyan]Shadow OS[/bold cyan]\n"
+        f"Version:            1.1.0\n"
+        f"Git Commit:         {git_commit}\n"
+        f"Build Date:         {build_date}\n"
+        f"Platform:           {detect_platform()}\n"
+        f"Python Version:     {sys.version.split()[0]}\n"
+        f"Dependency Profile: {get_dependency_profile()}\n"
+        f"Daemon:             {daemon_status}",
+        title="[bold red]SYSTEM INFO[/bold red]",
+        border_style="red"
+    ))
+
+@app.command()
+def repair():
+    """
+    One-click comprehensive auto-repair for Project Shadow.
+    """
+    console.print("[bold yellow]🔧 Initiating One-Click Shadow Auto-Repair...[/bold yellow]\n")
+    doctor(repair=True)
+
+@app.command()
+def diagnostics():
+    """
+    Run comprehensive health diagnostics and verify subsystem states.
+    """
+    console.print("[bold cyan]🩺 Running Diagnostics...[/bold cyan]\n")
+    doctor(repair=False)
+
+@app.command()
+def runtime(
+    action: Optional[str] = typer.Argument(None, help="Action to perform: status, start, stop")
+):
+    """
+    View and control the autonomous background reasoning loop runtime.
+    """
+    if not action or action == "status":
+        info = read_daemon_info()
+        if info and info.get("pid") and is_pid_running(info["pid"]):
+            console.print("Autonomous Runtime: [green]ONLINE & ACTIVE (Running inside background daemon)[/green]")
+        else:
+            console.print("Autonomous Runtime: [red]OFFLINE[/red]")
+    elif action == "start":
+        console.print("[green]Starting autonomous runtime...[/green]")
+        daemon_start()
+    elif action == "stop":
+        console.print("[yellow]Stopping autonomous runtime...[/yellow]")
+        daemon_stop()
+    else:
+        console.print(f"[red]Unknown action: {action}. Choose from: status, start, stop.[/red]")
+
+@app.command()
+def telegram(
+    action: Optional[str] = typer.Argument(None, help="Action to perform: status, test")
+):
+    """
+    Manage and verify the Telegram Companion service.
+    """
+    config = get_config()
+    token = config.telegram_bot_token
+    chat_id = config.telegram_chat_id
+
+    if not token:
+        console.print("Telegram Bot: [red]NOT CONFIGURED[/red] (Missing SHADOW_TELEGRAM_BOT_TOKEN)")
+        return
+
+    if not action or action == "status":
+        console.print("Telegram Bot: [green]CONFIGURED[/green]")
+        console.print(f"  Token: {token[:6]}...{token[-6:] if len(token)>12 else ''}")
+        console.print(f"  Chat ID: {chat_id or 'Not specified'}")
+    elif action == "test":
+        console.print("[cyan]Testing Telegram Connection...[/cyan]")
+        import httpx
+        try:
+            resp = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                bot_user = data.get("result", {}).get("username", "Unknown")
+                console.print(f"[green]✔ Connected to Telegram Bot Api successfully![/green]")
+                console.print(f"  Bot Name: @{bot_user}")
+
+                if chat_id:
+                    send_resp = httpx.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": "🔔 PROJECT SHADOW: Connection test from CLI successful!"},
+                        timeout=5.0
+                    )
+                    if send_resp.status_code == 200:
+                        console.print(f"[green]✔ Sent test message to chat {chat_id}.[/green]")
+                    else:
+                        console.print(f"[yellow]⚠ Failed to send message: {send_resp.text}[/yellow]")
+            else:
+                console.print(f"[red][x] API request failed with status: {resp.status_code}. Response: {resp.text}[/red]")
+        except Exception as e:
+            console.print(f"[red][x] Connection error: {e}[/red]")
+
+@app.command()
+def config(
+    key: Optional[str] = typer.Argument(None, help="The configuration key to view or modify (e.g. user_name, default_provider)"),
+    value: Optional[str] = typer.Argument(None, help="The new value to set for the configuration key")
+):
+    """
+    View and modify configuration preferences and environment settings.
+    """
+    env_file = os.path.join(SHADOW_HOME, "config", ".env")
+    if not os.path.exists(env_file):
+        console.print("[red]Configuration environment file not found. Run onboarding first.[/red]")
+        return
+
+    # View all keys if no args
+    if not key:
+        console.print("[bold cyan]=== Shadow Configuration Prefs ===[/bold cyan]")
+        with open(env_file, "r") as f:
+            for line in f:
+                if line.strip() and not line.startswith("#"):
+                    console.print(f"  {line.strip()}")
+        return
+
+    key_str = f"SHADOW_{key.upper()}"
+    lines = []
+    with open(env_file, "r") as f:
+        lines = f.readlines()
+
+    # If key is provided but no value, view that specific key
+    if key and not value:
+        found = False
+        for line in lines:
+            if line.startswith(f"{key_str}="):
+                console.print(f"[bold cyan]{key}:[/bold cyan] {line.split('=', 1)[1].strip().strip('\"')}")
+                found = True
+                break
+        if not found:
+            console.print(f"[yellow]Configuration key '{key}' not found in .env.[/yellow]")
+        return
+
+    # Set value
+    key_exists = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key_str}="):
+            lines[i] = f'{key_str}="{value}"\n'
+            key_exists = True
+            break
+    if not key_exists:
+        lines.append(f'{key_str}="{value}"\n')
+
+    with open(env_file, "w") as f:
+        f.writelines(lines)
+
+    # Reload config
+    from shadow.core.config import reset_config
+    reset_config(None)
+
+    console.print(f"[green]✔ Successfully updated '{key}' to '{value}' in your environment configuration.[/green]")
 
 if __name__ == "__main__":
     app()

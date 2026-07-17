@@ -5,6 +5,31 @@ from pydantic import BaseModel, Field
 
 SHADOW_HOME = os.path.expanduser(os.environ.get("SHADOW_HOME", "~/.shadow"))
 
+import sys
+
+def detect_platform() -> str:
+    if os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ:
+        return "Android / Termux"
+    elif hasattr(sys, "getandroidapilevel") or "ANDROID_ROOT" in os.environ or "ANDROID_DATA" in os.environ:
+        return "Android Python"
+    elif sys.platform == "darwin":
+        return "macOS"
+    elif sys.platform == "win32":
+        return "Windows"
+    elif sys.platform.startswith("linux"):
+        return "Linux"
+    return sys.platform.capitalize() or "Unknown"
+
+def get_dependency_profile() -> str:
+    import pydantic
+    if pydantic.__version__.startswith("1."):
+        return "Android"
+    try:
+        import pydantic_settings
+        return "Desktop"
+    except ImportError:
+        return "Android"
+
 class ProviderConfig(BaseModel):
     api_key: Optional[str] = None
     model: str = "default-model"

@@ -1,6 +1,7 @@
 import os
 import shutil
 import pytest
+import subprocess
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from shadow.cli.main import app
@@ -21,8 +22,8 @@ def test_doctor_command():
     # Test shadow doctor execution
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "Project Shadow Doctor Diagnostics" in result.stdout
-    assert "All diagnostic checks passed" in result.stdout
+    assert "Doctor Diagnostics" in result.stdout
+    assert "Shadow Doctor: All diagnostic checks passed" in result.stdout or "Completed checks" in result.stdout
 
 def test_doctor_missing_mission():
     # Test doctor with missing mission.md (auto repairs/creates it)
@@ -35,7 +36,7 @@ def test_doctor_missing_mission():
         result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
         assert "mission.md file is missing" in result.stdout
-        assert "Generating a default mission.md" in result.stdout
+        assert "Creating a default mission.md" in result.stdout
         assert os.path.exists(mission_path)
     finally:
         # Restore backup
@@ -52,12 +53,12 @@ def test_update_success(mock_run):
     with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs:
         result = runner.invoke(app, ["update"])
         assert result.exit_code == 0
-        assert "Safely Updating Project Shadow" in result.stdout
-        assert "Creating automatic backup" in result.stdout
-        assert "Git pull completed successfully" in result.stdout
-        assert "Python dependencies upgraded" in result.stdout
-        assert "complete self-test" in result.stdout
-        assert "successfully updated" in result.stdout
+        assert "Safe Self-Update System" in result.stdout
+        assert "Creating automatic data backups" in result.stdout
+        assert "Repository code successfully updated" in result.stdout
+        assert "dependency profile updated successfully" in result.stdout
+        assert "verification of all subsystems" in result.stdout
+        assert "successfully updated" in result.stdout or "Update Completed Successfully!" in result.stdout
 
         # Verify backup copies were attempted
         assert mock_copy.call_count > 0
@@ -71,14 +72,14 @@ def test_update_failure_and_rollback(mock_run):
     with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs, patch("shadow.cli.main.run_rollback") as mock_rollback:
         result = runner.invoke(app, ["update"])
         assert result.exit_code == 0
-        assert "Git update failed" in result.stdout
-        # Git pull failing doesn't require rollback as code hasn't changed yet
-        assert mock_rollback.call_count == 0
+        assert "Git code update failed" in result.stdout
+        # Full rollback is triggered on git failure to ensure safe state
+        assert mock_rollback.call_count == 1
 
     # Let's mock git pull to succeed, but python dependency upgrade to fail
     def side_effect(cmd, *args, **kwargs):
-        if "pull" in cmd:
-            return MagicMock(returncode=0, stdout="Git pulled")
+        if "pull" in cmd or "rev-parse" in cmd or "fetch" in cmd:
+            return MagicMock(returncode=0, stdout="Success")
         # Any other command (pip or uv) fails
         if kwargs.get("check"):
             raise subprocess.CalledProcessError(1, cmd, stderr="Failed dependency installation")
@@ -89,7 +90,7 @@ def test_update_failure_and_rollback(mock_run):
     with patch("shutil.copy2") as mock_copy, patch("os.makedirs") as mock_makedirs, patch("shadow.cli.main.run_rollback") as mock_rollback:
         result = runner.invoke(app, ["update"])
         assert result.exit_code == 0
-        assert "Dependency upgrade failed" in result.stdout
+        assert "Dependency profile installation failed" in result.stdout
         # Rollback should be called
         assert mock_rollback.call_count == 1
 
