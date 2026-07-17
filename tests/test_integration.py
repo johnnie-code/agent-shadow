@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import os
 from shadow.core.database import init_db, get_db_connection
+from shadow.core.config import get_config
 from shadow.goals.engine import goals_engine
 from shadow.goals.scanner import OpportunityScanner
 from shadow.goals.generator import TaskGenerator
@@ -12,8 +13,13 @@ from shadow.goals.reflection import reflection_engine
 @pytest.mark.asyncio
 async def test_full_autonomous_loop():
     # 1. Clean previous database if exists to ensure clean isolated test run
-    if os.path.exists("shadow.db"):
-        os.remove("shadow.db")
+    config = get_config()
+    db_path = config.db_path
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     init_db()
 

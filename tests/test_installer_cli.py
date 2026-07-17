@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from shadow.cli.main import app
 from shadow.core.database import init_db
+from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
 
@@ -21,21 +22,22 @@ def test_doctor_command():
 
 def test_doctor_missing_mission():
     # Test doctor with missing mission.md (auto repairs/creates it)
-    if os.path.exists("mission.md"):
-        shutil.copy2("mission.md", "mission.md.bak")
-        os.remove("mission.md")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+    if os.path.exists(mission_path):
+        shutil.copy2(mission_path, mission_path + ".bak")
+        os.remove(mission_path)
 
     try:
         result = runner.invoke(app, ["doctor"])
         assert result.exit_code == 0
         assert "mission.md file is missing" in result.stdout
         assert "Generating a default mission.md" in result.stdout
-        assert os.path.exists("mission.md")
+        assert os.path.exists(mission_path)
     finally:
         # Restore backup
-        if os.path.exists("mission.md.bak"):
-            shutil.copy2("mission.md.bak", "mission.md")
-            os.remove("mission.md.bak")
+        if os.path.exists(mission_path + ".bak"):
+            shutil.copy2(mission_path + ".bak", mission_path)
+            os.remove(mission_path + ".bak")
 
 @patch("subprocess.run")
 def test_update_success(mock_run):
@@ -98,7 +100,7 @@ def test_uninstall_cancelled():
 @patch("os.path.exists")
 def test_uninstall_preserve_data(mock_exists, mock_remove, mock_rmtree):
     # Test uninstall and preserve user data
-    mock_exists.side_effect = lambda path: True if path == ".venv" else False
+    mock_exists.side_effect = lambda path: True if "venv" in path else False
     result = runner.invoke(app, ["uninstall"], input="y\ny\n")
     assert result.exit_code == 0
     assert "User data (database, config, mission.md) preserved" in result.stdout

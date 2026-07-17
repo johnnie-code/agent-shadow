@@ -1,7 +1,9 @@
 import os
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
+
+SHADOW_HOME = os.path.expanduser(os.environ.get("SHADOW_HOME", "~/.shadow"))
 
 class ProviderConfig(BaseModel):
     api_key: Optional[str] = None
@@ -30,6 +32,14 @@ class ShadowConfig(BaseSettings):
     scan_interval_seconds: int = 3600  # 1 hour
     reflection_time: str = "22:00"  # HH:MM daily format
 
+    @model_validator(mode="after")
+    def resolve_paths(self) -> 'ShadowConfig':
+        if not os.path.isabs(self.db_path):
+            self.db_path = os.path.abspath(os.path.join(SHADOW_HOME, self.db_path))
+        if not os.path.isabs(self.data_dir):
+            self.data_dir = os.path.abspath(os.path.join(SHADOW_HOME, self.data_dir))
+        return self
+
     class Config:
         env_prefix = "SHADOW_"
         env_nested_delimiter = "__"
@@ -40,15 +50,18 @@ _config: Optional[ShadowConfig] = None
 def get_config() -> ShadowConfig:
     global _config
     if _config is None:
-        # Load .env file from the active data directory or current directory
         try:
             from dotenv import load_dotenv
-            data_dir = os.environ.get("SHADOW_DATA_DIR", ".")
-            env_path = os.path.join(data_dir, ".env")
-            if os.path.exists(env_path):
-                load_dotenv(env_path)
+            shadow_home_env = os.path.join(SHADOW_HOME, "config", ".env")
+            if os.path.exists(shadow_home_env):
+                load_dotenv(shadow_home_env)
             else:
-                load_dotenv()
+                data_dir = os.environ.get("SHADOW_DATA_DIR", ".")
+                env_path = os.path.join(data_dir, ".env")
+                if os.path.exists(env_path):
+                    load_dotenv(env_path)
+                else:
+                    load_dotenv()
         except ImportError:
             pass
         _config = ShadowConfig()
