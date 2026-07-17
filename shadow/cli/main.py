@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import time
 import typer
 import asyncio
 import shutil
@@ -8,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
-from shadow.core.config import get_config
+from shadow.core.config import get_config, SHADOW_HOME
 from shadow.core.database import init_db, get_db_connection
 from shadow.goals.engine import goals_engine
 from shadow.goals.scanner import OpportunityScanner
@@ -21,37 +23,187 @@ from shadow.tools.registry import tool_registry
 from shadow.skills.skills import skills_registry
 
 app = typer.Typer(name="shadow", help="PROJECT SHADOW — Autonomous OS Control Terminal CLI")
+daemon_app = typer.Typer(name="daemon", help="Manage the Shadow OS background daemon service.")
+app.add_typer(daemon_app, name="daemon")
+
 console = Console()
 
+# --- Daemon Helper Functions ---
+
+def get_pid_file_path() -> str:
+    return os.path.join(SHADOW_HOME, "daemon.pid")
+
+def read_daemon_info() -> Optional[dict]:
+    path = get_pid_file_path()
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+def write_daemon_info(pid: int, port: int):
+    os.makedirs(SHADOW_HOME, exist_ok=True)
+    path = get_pid_file_path()
+    with open(path, "w") as f:
+        json.dump({"pid": pid, "port": port, "started_at": datetime.now().isoformat()}, f)
+
+def remove_daemon_info():
+    path = get_pid_file_path()
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+def is_pid_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+def stop_generic():
+    try:
+        subprocess.run("pkill -f 'shadow.api.server'", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def get_repo_dir() -> Optional[str]:
+    try:
+        # We are inside shadow/cli/main.py, so __file__ is shadow/cli/main.py
+        current_file = os.path.abspath(__file__)
+        cli_dir = os.path.dirname(current_file)
+        shadow_dir = os.path.dirname(cli_dir)
+        repo_dir = os.path.dirname(shadow_dir)
+        if os.path.exists(os.path.join(repo_dir, ".git")):
+            return repo_dir
+    except Exception:
+        pass
+    # fallback to current working dir if it is a repo
+    if os.path.exists(".git"):
+        return os.path.abspath(".")
+    return None
+
+# --- Daemon Subcommands ---
+
+@daemon_app.command("start")
+def daemon_start(port: int = typer.Option(8000, help="The port on which the API server should listen.")):
+    """
+    Start the background daemon service.
+    """
+    init_db()
+    info = read_daemon_info()
+    if info:
+        pid = info.get("pid")
+        if pid and is_pid_running(pid):
+            console.print(f"[yellow]Daemon is already running under PID {pid} on port {info.get('port')}.[/yellow]")
+            return
+
+    console.print(f"[green]Starting Shadow background daemon on port {port}...[/green]")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", f"from shadow.api.server import start_server; start_server(port={port})"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        write_daemon_info(proc.pid, port)
+        console.print(f"[green]✓ Daemon started successfully with PID {proc.pid} on port {port}.[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to start daemon: {e}[/red]")
+
+@daemon_app.command("stop")
+def daemon_stop():
+    """
+    Stop the background daemon service.
+    """
+    info = read_daemon_info()
+    if not info:
+        console.print("[yellow]No daemon process info found. Attempting generic stop...[/yellow]")
+        stop_generic()
+        return
+
+    pid = info.get("pid")
+    if pid:
+        if is_pid_running(pid):
+            console.print(f"[yellow]Stopping background daemon (PID: {pid})...[/yellow]")
+            try:
+                os.kill(pid, 15)  # SIGTERM
+                for _ in range(30):
+                    if not is_pid_running(pid):
+                        break
+                    time.sleep(0.1)
+                if is_pid_running(pid):
+                    os.kill(pid, 9)  # SIGKILL
+                console.print("[green]✓ Daemon stopped successfully.[/green]")
+            except Exception as e:
+                console.print(f"[red]Error stopping daemon PID {pid}: {e}[/red]")
+        else:
+            console.print(f"[yellow]Process with PID {pid} is not running.[/yellow]")
+
+    remove_daemon_info()
+    stop_generic()
+
+@daemon_app.command("restart")
+def daemon_restart(port: int = typer.Option(8000, help="The port on which the API server should listen.")):
+    """
+    Restart the background daemon service.
+    """
+    console.print("[yellow]Restarting background daemon...[/yellow]")
+    daemon_stop()
+    time.sleep(1)
+    daemon_start(port=port)
+
+@daemon_app.command("status")
+def daemon_status():
+    """
+    Query the background daemon service status.
+    """
+    info = read_daemon_info()
+    if not info:
+        console.print("[red]Daemon is offline (no active process information found).[/red]")
+        return
+
+    pid = info.get("pid")
+    port = info.get("port")
+    if pid and is_pid_running(pid):
+        console.print(f"[green]Daemon is online and healthy.[/green]")
+        console.print(f"  PID: {pid}")
+        console.print(f"  Port: {port}")
+        console.print(f"  Started At: {info.get('started_at')}")
+    else:
+        console.print(f"[red]Daemon is offline (process {pid} is not running).[/red]")
+
+# --- Standard App Commands ---
+
 @app.command()
-def start(port: int = 8000, background: bool = False):
+def start(
+    port: int = typer.Option(8000, help="Port to run the API server on."),
+    background: bool = typer.Option(False, "--background", "-b", help="Run the daemon in the background.")
+):
     """
     Start the Shadow OS Daemon API server.
     """
     init_db()
-    console.print("[green]Starting Shadow OS Background Server...[/green]")
     if background:
-        import subprocess
-        # Start in background using nohup or subprocess
-        subprocess.Popen([sys.executable, "-c", f"from shadow.api.server import start_server; start_server(port={port})"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        console.print(f"[green]Shadow server is running in the background on port {port}.[/green]")
+        daemon_start(port=port)
     else:
-        from shadow.api.server import start_server
-        start_server(port=port)
+        console.print(f"[green]Starting Shadow OS Server in foreground on port {port}...[/green]")
+        write_daemon_info(os.getpid(), port)
+        try:
+            from shadow.api.server import start_server
+            start_server(port=port)
+        finally:
+            remove_daemon_info()
 
 @app.command()
 def stop():
     """
-    Stop any background running Shadow OS Daemon server.
+    Stop any running Shadow OS Daemon server.
     """
-    import subprocess
-    console.print("[yellow]Stopping Shadow OS Daemon process on port 8000...[/yellow]")
-    try:
-        # Kill python processes running uvicorn / server
-        subprocess.run("pkill -f 'shadow.api.server'", shell=True)
-        console.print("[green]Shadow background daemon stopped successfully.[/green]")
-    except Exception as e:
-        console.print(f"[red]Error stopping daemon: {e}[/red]")
+    daemon_stop()
 
 @app.command()
 def status():
@@ -82,6 +234,18 @@ def status():
     console.print(f"Total Tasks: {total_tasks}")
     console.print(f"Total Opportunities Found: {total_opps}")
 
+    # Display Daemon Status
+    info = read_daemon_info()
+    if info:
+        pid = info.get("pid")
+        port = info.get("port")
+        if pid and is_pid_running(pid):
+            console.print(f"Daemon Status: [green]ONLINE (PID: {pid}, Port: {port})[/green]")
+        else:
+            console.print(f"Daemon Status: [red]OFFLINE[/red]")
+    else:
+        console.print(f"Daemon Status: [red]OFFLINE[/red]")
+
     table = Table(title="Recent Decision Logs")
     table.add_column("Timestamp", style="dim")
     table.add_column("Level", style="bold yellow")
@@ -105,11 +269,12 @@ def mission():
     """
     Parse and synchronize the mission.md file to local structured goals database.
     """
-    if not os.path.exists("mission.md"):
-        console.print("[red]mission.md file not found. Create one in current directory first.[/red]")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+    if not os.path.exists(mission_path):
+        console.print(f"[red]mission.md file not found at {mission_path}. Create one first.[/red]")
         return
 
-    with open("mission.md", "r", encoding="utf-8") as f:
+    with open(mission_path, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
     goals = goals_engine.parse_mission_markdown(markdown_text)
@@ -143,7 +308,6 @@ def tasks():
     """
     List and prioritize queued execution tasks.
     """
-    # Auto reprioritize first to ensure fresh weights
     priority_engine.reprioritize_all_tasks()
 
     conn = get_db_connection()
@@ -347,11 +511,27 @@ def reflect():
 def run_rollback(backup_dir: str):
     console.print(f"\n[bold red]🚨 Update failed! Starting automatic rollback to backup from {backup_dir}...[/bold red]")
     try:
-        for file in ["mission.md", "shadow.db", ".env"]:
-            src = os.path.join(backup_dir, file)
-            if os.path.exists(src):
-                shutil.copy2(src, ".")
-                console.print(f"[green][✓] Restored {file}[/green]")
+        mission_path = os.path.join(SHADOW_HOME, "mission.md")
+        env_path = os.path.join(SHADOW_HOME, "config", ".env")
+        config = get_config()
+        db_path = config.db_path
+
+        src_env = os.path.join(backup_dir, ".env")
+        if os.path.exists(src_env):
+            os.makedirs(os.path.dirname(env_path), exist_ok=True)
+            shutil.copy2(src_env, env_path)
+            console.print(f"[green][✓] Restored config/.env[/green]")
+
+        src_mission = os.path.join(backup_dir, "mission.md")
+        if os.path.exists(src_mission):
+            shutil.copy2(src_mission, mission_path)
+            console.print(f"[green][✓] Restored mission.md[/green]")
+
+        src_db = os.path.join(backup_dir, "shadow.db")
+        if os.path.exists(src_db):
+            shutil.copy2(src_db, db_path)
+            console.print(f"[green][✓] Restored shadow.db[/green]")
+
         console.print("[bold green]✓ Rollback completed successfully. System is restored to its previous state.[/bold green]")
     except Exception as re:
         console.print(f"[red][x] Critical Error: Rollback failed: {re}[/red]")
@@ -364,27 +544,43 @@ def update():
     console.print("[bold blue]🔄 Safely Updating Project Shadow...[/bold blue]\n")
 
     # 1. Perform backing up
-    backup_dir = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    backup_root = os.path.join(SHADOW_HOME, "backups")
+    backup_dir = os.path.join(backup_root, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     console.print(f"[*] Creating automatic backup at [yellow]{backup_dir}/[/yellow]...")
     try:
         os.makedirs(backup_dir, exist_ok=True)
         backed_up_files = []
-        for file in ["mission.md", "shadow.db", ".env"]:
-            if os.path.exists(file):
-                shutil.copy2(file, backup_dir)
-                backed_up_files.append(file)
+
+        config = get_config()
+        db_path = config.db_path
+        env_path = os.path.join(SHADOW_HOME, "config", ".env")
+        mission_path = os.path.join(SHADOW_HOME, "mission.md")
+
+        if os.path.exists(env_path):
+            shutil.copy2(env_path, os.path.join(backup_dir, ".env"))
+            backed_up_files.append("config/.env")
+        if os.path.exists(mission_path):
+            shutil.copy2(mission_path, os.path.join(backup_dir, "mission.md"))
+            backed_up_files.append("mission.md")
+        if os.path.exists(db_path):
+            shutil.copy2(db_path, os.path.join(backup_dir, "shadow.db"))
+            backed_up_files.append("shadow.db")
+
         console.print(f"[green][✓] Backed up: {', '.join(backed_up_files)}[/green]")
     except Exception as e:
         console.print(f"[red][x] Backup failed: {e}. Aborting update for safety.[/red]")
         return
 
-    # 2. Pull changes from repository
-    console.print("[*] Pulling latest updates from git repository...")
-    try:
-        if not os.path.exists(".git"):
-            raise Exception("Not a git repository.")
+    # Discover repo directory
+    repo_dir = get_repo_dir()
+    if not repo_dir:
+        console.print("[red][x] Could not locate git repository directory. Aborting update.[/red]")
+        return
 
-        res = subprocess.run(["git", "pull"], text=True, capture_output=True)
+    # 2. Pull changes from repository
+    console.print(f"[*] Pulling latest updates from git repository at {repo_dir}...")
+    try:
+        res = subprocess.run(["git", "pull"], cwd=repo_dir, text=True, capture_output=True)
         if res.returncode != 0:
             raise Exception(res.stderr or "git pull command failed.")
         console.print("[green][✓] Git pull completed successfully.[/green]")
@@ -398,9 +594,9 @@ def update():
     try:
         use_uv = shutil.which("uv") is not None
         if use_uv:
-            subprocess.run(["uv", "pip", "install", "-e", "."], check=True)
+            subprocess.run(["uv", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
         else:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], check=True)
+            subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
         console.print("[green][✓] Python dependencies upgraded successfully.[/green]")
     except Exception as e:
         console.print(f"[red][x] Dependency upgrade failed: {e}[/red]")
@@ -411,8 +607,9 @@ def update():
     console.print("[*] Running database migrations and syncing mission...")
     try:
         init_db()
-        if os.path.exists("mission.md"):
-            with open("mission.md", "r", encoding="utf-8") as f:
+        mission_path = os.path.join(SHADOW_HOME, "mission.md")
+        if os.path.exists(mission_path):
+            with open(mission_path, "r", encoding="utf-8") as f:
                 markdown_text = f.read()
             goals = goals_engine.parse_mission_markdown(markdown_text)
             goals_engine.sync_goals_to_db(goals)
@@ -425,7 +622,7 @@ def update():
     # 5. Run Self-Test
     console.print("[*] Performing complete self-test...")
     try:
-        res = subprocess.run([sys.executable, "-m", "pytest", "tests/"], capture_output=True, text=True)
+        res = subprocess.run([sys.executable, "-m", "pytest", "tests/"], cwd=repo_dir, capture_output=True, text=True)
         if res.returncode != 0:
             raise Exception(res.stderr or "Self-tests failed.")
         console.print("[green][✓] Complete self-test suites passed perfectly![/green]")
@@ -476,11 +673,12 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
         if repair:
             console.print("[yellow]Attempting to repair: Installing missing dependencies...[/yellow]")
             try:
+                repo_dir = get_repo_dir() or "."
                 use_uv = shutil.which("uv") is not None
                 if use_uv:
-                    subprocess.run(["uv", "pip", "install", "-e", "."], check=True)
+                    subprocess.run(["uv", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
                 else:
-                    subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], check=True)
+                    subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
                 console.print("[green][✓] Reinstalled dependencies successfully.[/green]")
             except Exception as e:
                 console.print(f"[red][x] Failed to reinstall dependencies: {e}[/red]")
@@ -519,19 +717,19 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                 console.print(f"[red][x] Database repair failed: {re}[/red]")
 
     # 4. Mission file and goal sync check
-    if not os.path.exists("mission.md"):
-        console.print("[red][x] mission.md file is missing.[/red]")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+    if not os.path.exists(mission_path):
+        console.print(f"[red][x] mission.md file is missing at {mission_path}.[/red]")
         all_ok = False
         if repair:
             console.print("[yellow]Attempting to repair: Generating a default mission.md...[/yellow]")
             try:
-                with open("mission.md", "w", encoding="utf-8") as f:
+                os.makedirs(os.path.dirname(mission_path), exist_ok=True)
+                with open(mission_path, "w", encoding="utf-8") as f:
                     f.write("# MISSION\n\n## Identity\n- **Name**: Shadow Agent\n- **Role**: Personal Chief of Staff / Autonomous Agent OS\n")
-                console.print("[green][✓] Generated default mission.md.[/green]")
+                console.print(f"[green][✓] Generated default mission.md at {mission_path}[/green]")
                 if db_ok:
-                    with open("mission.md", "r", encoding="utf-8") as f:
-                        markdown_text = f.read()
-                    goals = goals_engine.parse_mission_markdown(markdown_text)
+                    goals = goals_engine.parse_mission_markdown("# MISSION\n\n## Identity\n- **Name**: Shadow Agent\n- **Role**: Personal Chief of Staff / Autonomous Agent OS\n")
                     goals_engine.sync_goals_to_db(goals)
                     console.print("[green][✓] Synced default goals to database.[/green]")
             except Exception as e:
@@ -545,7 +743,7 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                     console.print(f"[green][✓] Database contains {len(active_goals)} active goal(s).[/green]")
                 else:
                     console.print("[yellow][!] Database does not contain active goals. Syncing mission.md...[/yellow]")
-                    with open("mission.md", "r", encoding="utf-8") as f:
+                    with open(mission_path, "r", encoding="utf-8") as f:
                         markdown_text = f.read()
                     goals = goals_engine.parse_mission_markdown(markdown_text)
                     goals_engine.sync_goals_to_db(goals)
@@ -577,27 +775,25 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                 new_key = typer.prompt(f"Please enter your API Key for provider '{provider}' (or leave blank to skip)", default="", show_default=False)
                 if new_key:
                     try:
-                        env_file = ".env"
+                        env_file = os.path.join(SHADOW_HOME, "config", ".env")
+                        lines = []
                         if os.path.exists(env_file):
                             with open(env_file, "r") as f:
                                 lines = f.readlines()
-                            provider_key_str = f"SHADOW_{provider.upper()}__API_KEY"
-                            key_exists = False
-                            for i, line in enumerate(lines):
-                                if line.startswith(f"{provider_key_str}="):
-                                    lines[i] = f'{provider_key_str}="{new_key}"\n'
-                                    key_exists = True
-                                    break
-                            if not key_exists:
-                                lines.append(f'{provider_key_str}="{new_key}"\n')
-                            with open(env_file, "w") as f:
-                                f.writelines(lines)
-                            console.print(f"[green][✓] API Key written to .env. Please restart to reload config.[/green]")
                         else:
-                            with open(env_file, "w") as f:
-                                f.write(f'SHADOW_DEFAULT_PROVIDER="{provider}"\n')
-                                f.write(f'{provider_key_str}="{new_key}"\n')
-                            console.print(f"[green][✓] Generated .env with API Key.[/green]")
+                            os.makedirs(os.path.dirname(env_file), exist_ok=True)
+                        provider_key_str = f"SHADOW_{provider.upper()}__API_KEY"
+                        key_exists = False
+                        for i, line in enumerate(lines):
+                            if line.startswith(f"{provider_key_str}="):
+                                lines[i] = f'{provider_key_str}="{new_key}"\n'
+                                key_exists = True
+                                break
+                        if not key_exists:
+                            lines.append(f'{provider_key_str}="{new_key}"\n')
+                        with open(env_file, "w") as f:
+                            f.writelines(lines)
+                        console.print(f"[green][✓] API Key written to {env_file}. Please restart to reload config.[/green]")
                     except Exception as e:
                         console.print(f"[red][x] Failed to write API key to .env: {e}[/red]")
 
@@ -625,33 +821,53 @@ def uninstall(
     if preserve_data is None:
         preserve_data = typer.confirm("Do you want to preserve your user data (database, config, mission.md)?", default=True)
 
+    config = get_config()
+    db_path = config.db_path
+    db_wal = db_path + "-wal"
+    db_shm = db_path + "-shm"
+    env_file = os.path.join(SHADOW_HOME, "config", ".env")
+    mission_file = os.path.join(SHADOW_HOME, "mission.md")
+
     # 1. Deleting user data if not preserving
     if not preserve_data:
         console.print("[yellow][*] Removing user data...[/yellow]")
-        for file in ["shadow.db", "shadow.db-wal", "shadow.db-shm", ".env", "mission.md"]:
+        for file in [db_path, db_wal, db_shm, env_file, mission_file]:
             if os.path.exists(file):
                 try:
                     os.remove(file)
                     console.print(f"  Removed {file}")
                 except Exception as e:
                     console.print(f"  [red]Failed to remove {file}: {e}[/red]")
-        if os.path.exists("backups"):
-            try:
-                shutil.rmtree("backups")
-                console.print("  Removed backups/ directory")
-            except Exception as e:
-                console.print(f"  [red]Failed to remove backups/: {e}[/red]")
+
+        # Remove cache, logs, backups inside SHADOW_HOME
+        for sub in ["backups", "cache", "logs", "memory", "plugins", "config"]:
+            path = os.path.join(SHADOW_HOME, sub)
+            if os.path.exists(path):
+                try:
+                    shutil.rmtree(path)
+                    console.print(f"  Removed {sub}/ directory")
+                except Exception as e:
+                    console.print(f"  [red]Failed to remove {sub}/: {e}[/red]")
     else:
         console.print("[green][✓] User data (database, config, mission.md) preserved.[/green]")
 
     # 2. Deleting virtual environment
+    venv_dir = os.path.join(SHADOW_HOME, "venv")
+    if os.path.exists(venv_dir):
+        console.print(f"[yellow][*] Deleting virtual environment ({venv_dir})...[/yellow]")
+        try:
+            shutil.rmtree(venv_dir)
+            console.print("  Deleted venv directory")
+        except Exception as e:
+            console.print(f"  [red]Failed to delete venv: {e}[/red]")
+
     if os.path.exists(".venv"):
-        console.print("[yellow][*] Deleting virtual environment (.venv)...[/yellow]")
+        console.print("[yellow][*] Deleting local virtual environment (.venv)...[/yellow]")
         try:
             shutil.rmtree(".venv")
-            console.print("  Deleted .venv directory")
+            console.print("  Deleted local .venv directory")
         except Exception as e:
-            console.print(f"  [red]Failed to delete .venv: {e}[/red]")
+            console.print(f"  [red]Failed to delete local .venv: {e}[/red]")
 
     # 3. Deleting global executable wrapper
     is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
@@ -672,9 +888,20 @@ def uninstall(
         except Exception as e:
             console.print(f"  [red]Failed to remove global wrapper: {e}[/red]")
 
+    if not preserve_data and os.path.exists(SHADOW_HOME):
+        try:
+            leftovers = os.listdir(SHADOW_HOME)
+            if not leftovers or leftovers == ["daemon.pid"]:
+                shutil.rmtree(SHADOW_HOME)
+                console.print(f"  Removed {SHADOW_HOME} directory entirely.")
+        except Exception:
+            pass
+
     console.print("\n[bold green]✓ Project Shadow uninstalled successfully![/bold green]")
-    console.print("Note: To completely delete the repository, you can now safely delete this directory:")
-    console.print(f"  [yellow]rm -rf {os.getcwd()}[/yellow]\n")
+    repo_dir = get_repo_dir()
+    if repo_dir:
+        console.print("Note: To completely delete the repository, you can now safely delete this directory:")
+        console.print(f"  [yellow]rm -rf {repo_dir}[/yellow]\n")
 
 if __name__ == "__main__":
     app()

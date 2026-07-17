@@ -44,6 +44,19 @@ log_error() {
     echo -e "${RED}${BOLD}[x] $1${NC}"
 }
 
+# Define production directories
+SHADOW_HOME="${SHADOW_HOME:-$HOME/.shadow}"
+VENV_DIR="$SHADOW_HOME/venv"
+
+log_header "Initializing production-grade directory layout..."
+mkdir -p "$SHADOW_HOME/config"
+mkdir -p "$SHADOW_HOME/memory"
+mkdir -p "$SHADOW_HOME/logs"
+mkdir -p "$SHADOW_HOME/cache"
+mkdir -p "$SHADOW_HOME/plugins"
+mkdir -p "$SHADOW_HOME/backups"
+log_success "Directory structure created at $SHADOW_HOME/"
+
 # 1. Detect Termux / Android environment
 log_header "Detecting environment and compatibility..."
 IS_TERMUX=false
@@ -145,56 +158,56 @@ else
 fi
 
 # 5. Virtual Environment Creation & Dependencies Installation
-log_header "Creating Python virtual environment (.venv)..."
+log_header "Creating Python virtual environment ($VENV_DIR)..."
 if [ "$USE_UV" = true ]; then
-    uv venv .venv
+    uv venv "$VENV_DIR"
     log_success "Virtual environment created with uv."
     log_header "Installing Python dependencies with uv..."
     if [ "$IS_TERMUX" = true ]; then
         log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
-        uv pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+        uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
     else
-        uv pip install -e .
+        uv pip install --python "$VENV_DIR/bin/python" -e .
     fi
 else
-    $PYTHON_CMD -m venv .venv
+    $PYTHON_CMD -m venv "$VENV_DIR"
     log_success "Virtual environment created with python -m venv."
     log_header "Installing Python dependencies with pip..."
-    .venv/bin/pip install --upgrade pip
+    "$VENV_DIR/bin/pip" install --upgrade pip
     if [ "$IS_TERMUX" = true ]; then
         log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
-        .venv/bin/pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+        "$VENV_DIR/bin/pip" install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
     else
-        .venv/bin/pip install -e .
+        "$VENV_DIR/bin/pip" install -e .
     fi
 fi
 log_success "All Python dependencies installed."
 
 # 6. Validate Dependencies After Installation
 log_header "Validating installed Python dependencies..."
-VENV_PYTHON="./.venv/bin/python"
-if $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" &>/dev/null; then
+VENV_PYTHON="$VENV_DIR/bin/python"
+if SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" &>/dev/null; then
     log_success "All dependencies successfully verified."
 else
     log_error "Dependency validation failed. Some core packages are missing."
-    # Print the specific error for diagnosis
-    $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" || true
+    SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "import pydantic, pydantic_settings, yaml, fastapi, uvicorn, rich, watchdog, httpx, typer" || true
     exit 1
 fi
 
 # 7. Initialize Database
 log_header "Initializing SQLite database (with WAL)..."
-$VENV_PYTHON -c "from shadow.core.database import init_db; init_db()"
+SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "from shadow.core.database import init_db; init_db()"
 log_success "SQLite database initialized."
 
 # 8. Generate Default Mission & Configuration
 log_header "Generating configuration files..."
-if [ ! -f "mission.md" ]; then
+MISSION_PATH="$SHADOW_HOME/mission.md"
+if [ ! -f "$MISSION_PATH" ]; then
     if [ -f "docs/mission.md" ]; then
-        cp docs/mission.md mission.md
+        cp docs/mission.md "$MISSION_PATH"
         log_success "Default mission.md copied from docs."
     else
-        cat << 'EOF' > mission.md
+        cat << 'EOF' > "$MISSION_PATH"
 # MISSION
 
 ## Identity
@@ -209,14 +222,14 @@ if [ ! -f "mission.md" ]; then
 ## Active Projects
 - **Project Shadow**: Ensure system is operational, resilient, and fully configured.
 EOF
-        log_success "Generated default mission.md."
+        log_success "Generated default mission.md at $MISSION_PATH."
     fi
 else
-    log_success "mission.md already exists."
+    log_success "mission.md already exists at $MISSION_PATH."
 fi
 
 # Set up .env file if it doesn't exist
-ENV_FILE=".env"
+ENV_FILE="$SHADOW_HOME/config/.env"
 if [ ! -f "$ENV_FILE" ]; then
     cat << 'EOF' > "$ENV_FILE"
 # Shadow OS Configuration Environment Variables
@@ -230,9 +243,9 @@ SHADOW_NOTIFICATION_PREFERENCES="terminal"
 SHADOW_SCAN_INTERVAL_SECONDS=3600
 SHADOW_REFLECTION_TIME="22:00"
 EOF
-    log_success "Generated default .env configuration file."
+    log_success "Generated default .env configuration file at $ENV_FILE."
 else
-    log_success ".env configuration file already exists."
+    log_success ".env configuration file already exists at $ENV_FILE."
 fi
 
 # 9. Verify Termux:API command-line tools
@@ -316,13 +329,14 @@ fi
 
 # 11. Run Migrations & Goals Synchronization
 log_header "Synchronizing mission to local structured database..."
-$VENV_PYTHON -c "
+SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -c "
 import os
 from shadow.core.database import init_db
 from shadow.goals.engine import goals_engine
 init_db()
-if os.path.exists('mission.md'):
-    with open('mission.md', 'r') as f:
+mission_path = os.path.join(os.environ.get('SHADOW_HOME'), 'mission.md')
+if os.path.exists(mission_path):
+    with open(mission_path, 'r') as f:
         markdown_text = f.read()
     goals = goals_engine.parse_mission_markdown(markdown_text)
     goals_engine.sync_goals_to_db(goals)
@@ -331,14 +345,14 @@ log_success "Database migrations and goals synced."
 
 # 12. Self-test execution
 log_header "Running self-test..."
-if $VENV_PYTHON -m pytest tests/ &>/dev/null; then
+if SHADOW_HOME="$SHADOW_HOME" $VENV_PYTHON -m pytest "$REPO_DIR/tests/" &>/dev/null; then
     log_success "All self-test suites passed perfectly!"
 else
     log_warn "Some diagnostic tests failed or environment tests skipped. Checking CLI state..."
 fi
 
 # Test running CLI status
-if ./.venv/bin/shadow status &>/dev/null; then
+if SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/shadow" status &>/dev/null; then
     log_success "Shadow CLI daemon status confirmed functional."
 else
     log_error "CLI failed to execute. Check your configurations."
@@ -366,24 +380,34 @@ if [ -n "$GLOBAL_BIN_DIR" ] && [ -d "$GLOBAL_BIN_DIR" ]; then
     cat << EOF > "$WRAPPER_PATH"
 #!/usr/bin/env bash
 # PROJECT SHADOW Wrapper Command
-export SHADOW_DATA_DIR="$REPO_DIR"
-cd "$REPO_DIR" && exec "$REPO_DIR/.venv/bin/shadow" "\$@"
+export SHADOW_HOME="$SHADOW_HOME"
+export SHADOW_DATA_DIR="$SHADOW_HOME"
+source "$VENV_DIR/bin/activate"
+exec "$VENV_DIR/bin/shadow" "\$@"
 EOF
     chmod +x "$WRAPPER_PATH"
     log_success "Global executable wrapper created successfully at: $WRAPPER_PATH"
 else
     log_warn "Could not locate a writeable bin directory to expose 'shadow' globally."
-    log_warn "To run, please navigate to $REPO_DIR and execute .venv/bin/shadow directly."
+    log_warn "To run, please configure your PATH to include $VENV_DIR/bin or execute: SHADOW_HOME=$SHADOW_HOME $VENV_DIR/bin/shadow"
 fi
 
-# 14. Installation Summary
+# 14. Enable Shell Autocompletion
+log_header "Installing shell autocompletions..."
+if SHADOW_HOME="$SHADOW_HOME" "$VENV_DIR/bin/shadow" --install-completion &>/dev/null; then
+    log_success "Shell autocompletion successfully registered."
+else
+    log_warn "Could not automatically register completion. Run 'shadow --install-completion' manually inside your shell of choice."
+fi
+
+# 15. Installation Summary
 log_header "INSTALLATION COMPLETE!"
 echo -e "${GREEN}${BOLD}Congratulations! Project Shadow is now successfully installed.${NC}"
 echo "--------------------------------------------------------"
-echo -e "Install Directory:  ${CYAN}$REPO_DIR${NC}"
-echo -e "Virtual Environment: ${CYAN}$REPO_DIR/.venv${NC}"
-echo -e "Global CLI Command:  ${GREEN}shadow${NC}"
-echo -e "Configured Provider: ${PURPLE}$SELECTED_PROVIDER${NC}"
+echo -e "User Data (SHADOW_HOME): ${CYAN}$SHADOW_HOME${NC}"
+echo -e "Virtual Environment:     ${CYAN}$VENV_DIR${NC}"
+echo -e "Global CLI Command:      ${GREEN}shadow${NC}"
+echo -e "Configured Provider:     ${PURPLE}$SELECTED_PROVIDER${NC}"
 echo "--------------------------------------------------------"
 echo -e "\nYou can now immediately manage and run Shadow using:"
 echo -e "  ${GREEN}shadow start${NC}  - Start the background server"

@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import os
 from shadow.core.database import init_db, get_db_connection
+from shadow.core.config import get_config
 from shadow.tools.registry import tool_registry
 from shadow.goals.scanner import OpportunityScanner
 from shadow.goals.generator import TaskGenerator
@@ -10,8 +11,13 @@ from shadow.goals.priority import priority_engine
 @pytest.mark.asyncio
 async def test_opportunity_scanner_and_generator():
     # Clear previous database to ensure clean isolated test run
-    if os.path.exists("shadow.db"):
-        os.remove("shadow.db")
+    config = get_config()
+    db_path = config.db_path
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     init_db()
     tool_registry.discover_tools()
@@ -48,8 +54,13 @@ async def test_opportunity_scanner_and_generator():
 
 def test_priority_engine():
     # Clear database to isolate
-    if os.path.exists("shadow.db"):
-        os.remove("shadow.db")
+    config = get_config()
+    db_path = config.db_path
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
 
     # 1. Manual scoring formula test with expanded multi-factor priority
     score = priority_engine.calculate_priority_score(

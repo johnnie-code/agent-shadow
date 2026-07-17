@@ -6,6 +6,9 @@ from shadow.core.config import get_config
 def get_db_connection() -> sqlite3.Connection:
     config = get_config()
     db_path = config.db_path
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
