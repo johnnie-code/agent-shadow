@@ -93,6 +93,14 @@ def status():
     console.print(table)
 
 @app.command()
+def tui():
+    """
+    Launch the Rich Dashboard interface.
+    """
+    from shadow.cli.tui import start_tui_loop
+    start_tui_loop()
+
+@app.command()
 def mission():
     """
     Parse and synchronize the mission.md file to local structured goals database.
