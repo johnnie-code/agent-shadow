@@ -40,7 +40,17 @@ _config: Optional[ShadowConfig] = None
 def get_config() -> ShadowConfig:
     global _config
     if _config is None:
-        # Load from environment variables by default, can be extended to yaml/json
+        # Load .env file from the active data directory or current directory
+        try:
+            from dotenv import load_dotenv
+            data_dir = os.environ.get("SHADOW_DATA_DIR", ".")
+            env_path = os.path.join(data_dir, ".env")
+            if os.path.exists(env_path):
+                load_dotenv(env_path)
+            else:
+                load_dotenv()
+        except ImportError:
+            pass
         _config = ShadowConfig()
     return _config
 

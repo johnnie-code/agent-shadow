@@ -6,6 +6,9 @@ build-backend = "hatchling.build"
 name = "shadow-os"
 version = "1.0.0"
 description = "PROJECT SHADOW — Autonomous Goal-Driven Agent Operating System for Android (Termux)"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shadow"]
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
