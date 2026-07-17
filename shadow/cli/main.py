@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
 from shadow.core.config import get_config, SHADOW_HOME
 from shadow.core.database import init_db, get_db_connection
 from shadow.goals.engine import goals_engine
@@ -27,6 +28,18 @@ daemon_app = typer.Typer(name="daemon", help="Manage the Shadow OS background da
 app.add_typer(daemon_app, name="daemon")
 
 console = Console()
+
+# --- Onboarding Completion Helper ---
+
+def is_onboarding_completed() -> bool:
+    try:
+        init_db()
+        mem = memory_engine.get_memory_by_key("onboarding_completed")
+        if mem and mem.get("content") == "true":
+            return True
+    except Exception:
+        pass
+    return False
 
 # --- Daemon Helper Functions ---
 
@@ -72,7 +85,6 @@ def stop_generic():
 
 def get_repo_dir() -> Optional[str]:
     try:
-        # We are inside shadow/cli/main.py, so __file__ is shadow/cli/main.py
         current_file = os.path.abspath(__file__)
         cli_dir = os.path.dirname(current_file)
         shadow_dir = os.path.dirname(cli_dir)
@@ -81,10 +93,25 @@ def get_repo_dir() -> Optional[str]:
             return repo_dir
     except Exception:
         pass
-    # fallback to current working dir if it is a repo
     if os.path.exists(".git"):
         return os.path.abspath(".")
     return None
+
+# --- Entrypoint callback ---
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """
+    Default entrypoint for shadow command.
+    Checks if onboarding is completed, and launches onboarding or dashboard accordingly.
+    """
+    if ctx.invoked_subcommand is None:
+        if not is_onboarding_completed():
+            from shadow.cli.onboard import run_onboarding
+            run_onboarding(interactive=True)
+        else:
+            from shadow.cli.tui import start_tui_loop
+            start_tui_loop()
 
 # --- Daemon Subcommands ---
 
@@ -206,6 +233,13 @@ def stop():
     daemon_stop()
 
 @app.command()
+def restart(port: int = typer.Option(8000, help="The port on which the API server should listen.")):
+    """
+    Gracefully restart the Shadow OS background daemon service.
+    """
+    daemon_restart(port=port)
+
+@app.command()
 def status():
     """
     Query the local daemon and database status.
@@ -263,6 +297,130 @@ def tui():
     """
     from shadow.cli.tui import start_tui_loop
     start_tui_loop()
+
+@app.command()
+def dashboard():
+    """
+    Launch the beautiful Rich Home Dashboard.
+    """
+    from shadow.cli.tui import start_tui_loop
+    start_tui_loop()
+
+@app.command()
+def onboard():
+    """
+    Force/re-run the Shadow OS onboarding experience.
+    """
+    from shadow.cli.onboard import run_onboarding
+    run_onboarding(interactive=True)
+
+@app.command()
+def logs(limit: int = typer.Option(20, help="Number of recent logs to show.")):
+    """
+    Display the latest system decision and event logs.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT level, action, reasoning, created_at FROM system_logs ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        console.print("[yellow]No decision logs found.[/yellow]")
+        return
+
+    table = Table(title=f"Latest {limit} System Logs")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Level", style="bold yellow")
+    table.add_column("Action", style="green")
+    table.add_column("Reasoning")
+
+    for row in rows:
+        level_style = "bold red" if row["level"] == "ERROR" else "bold yellow" if row["level"] == "WARNING" else "bold green"
+        table.add_row(row["created_at"], f"[{level_style}]{row['level']}[/{level_style}]", row["action"], row["reasoning"] or "")
+
+    console.print(table)
+
+@app.command()
+def settings():
+    """
+    Interactively view and configure Shadow OS preferences and API keys.
+    """
+    config = get_config()
+    console.print("\n[bold cyan]=== Current Configurations ===[/bold cyan]")
+    console.print(f"User Name: [green]{config.user_name}[/green]")
+    console.print(f"Assistant Name: [green]{config.assistant_name}[/green]")
+    console.print(f"AI Provider: [green]{config.default_provider}[/green]")
+    console.print(f"Notification Preferences: [green]{config.notification_preferences}[/green]")
+    console.print(f"Battery Limit: [green]{config.battery_limit}%[/green]")
+
+    edit = typer.confirm("\nDo you want to edit these configurations?")
+    if not edit:
+        return
+
+    from shadow.cli.onboard import run_onboarding
+    run_onboarding(interactive=True)
+
+@app.command()
+def backup():
+    """
+    Create a secure backup of database, environment config, and mission.
+    """
+    backup_root = os.path.join(SHADOW_HOME, "backups")
+    backup_dir = os.path.join(backup_root, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    config = get_config()
+    db_path = config.db_path
+    env_path = os.path.join(SHADOW_HOME, "config", ".env")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+
+    backed_up = []
+    if os.path.exists(env_path):
+        shutil.copy2(env_path, os.path.join(backup_dir, ".env"))
+        backed_up.append("config/.env")
+    if os.path.exists(mission_path):
+        shutil.copy2(mission_path, os.path.join(backup_dir, "mission.md"))
+        backed_up.append("mission.md")
+    if os.path.exists(db_path):
+        shutil.copy2(db_path, os.path.join(backup_dir, "shadow.db"))
+        backed_up.append("shadow.db")
+
+    console.print(f"[green]✓ Created backup at {backup_dir}.[/green]")
+    console.print(f"  Files backed up: {', '.join(backed_up)}")
+
+@app.command()
+def restore(backup_name: Optional[str] = typer.Argument(None, help="Specific backup directory name to restore.")):
+    """
+    Restore configurations, mission, and DB from a previous backup.
+    """
+    backup_root = os.path.join(SHADOW_HOME, "backups")
+    if not os.path.exists(backup_root):
+        console.print("[red]No backups folder exists.[/red]")
+        return
+
+    backups = sorted([d for d in os.listdir(backup_root) if os.path.isdir(os.path.join(backup_root, d))])
+    if not backups:
+        console.print("[red]No backups found.[/red]")
+        return
+
+    if not backup_name:
+        console.print("[bold yellow]Available backups:[/bold yellow]")
+        for b in backups:
+            console.print(f"  - {b}")
+        backup_name = typer.prompt("Enter the backup name to restore", default=backups[-1])
+
+    target_dir = os.path.join(backup_root, backup_name)
+    if not os.path.exists(target_dir):
+        console.print(f"[red]Backup '{backup_name}' does not exist.[/red]")
+        return
+
+    confirm = typer.confirm(f"Are you sure you want to restore from '{backup_name}'? This will overwrite your current configuration and database!")
+    if not confirm:
+        console.print("[yellow]Restoration cancelled.[/yellow]")
+        return
+
+    run_rollback(target_dir)
 
 @app.command()
 def mission():
@@ -509,7 +667,7 @@ def reflect():
     console.print(text)
 
 def run_rollback(backup_dir: str):
-    console.print(f"\n[bold red]🚨 Update failed! Starting automatic rollback to backup from {backup_dir}...[/bold red]")
+    console.print(f"\n[bold red]🚨 Starting automatic restore/rollback to backup from {backup_dir}...[/bold red]")
     try:
         mission_path = os.path.join(SHADOW_HOME, "mission.md")
         env_path = os.path.join(SHADOW_HOME, "config", ".env")
@@ -532,9 +690,9 @@ def run_rollback(backup_dir: str):
             shutil.copy2(src_db, db_path)
             console.print(f"[green][✓] Restored shadow.db[/green]")
 
-        console.print("[bold green]✓ Rollback completed successfully. System is restored to its previous state.[/bold green]")
+        console.print("[bold green]✓ Restoration completed successfully. System is restored.[/bold green]")
     except Exception as re:
-        console.print(f"[red][x] Critical Error: Rollback failed: {re}[/red]")
+        console.print(f"[red][x] Critical Error: Restoration failed: {re}[/red]")
 
 @app.command()
 def update():
@@ -543,7 +701,6 @@ def update():
     """
     console.print("[bold blue]🔄 Safely Updating Project Shadow...[/bold blue]\n")
 
-    # 1. Perform backing up
     backup_root = os.path.join(SHADOW_HOME, "backups")
     backup_dir = os.path.join(backup_root, f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     console.print(f"[*] Creating automatic backup at [yellow]{backup_dir}/[/yellow]...")
@@ -571,13 +728,11 @@ def update():
         console.print(f"[red][x] Backup failed: {e}. Aborting update for safety.[/red]")
         return
 
-    # Discover repo directory
     repo_dir = get_repo_dir()
     if not repo_dir:
         console.print("[red][x] Could not locate git repository directory. Aborting update.[/red]")
         return
 
-    # 2. Pull changes from repository
     console.print(f"[*] Pulling latest updates from git repository at {repo_dir}...")
     try:
         res = subprocess.run(["git", "pull"], cwd=repo_dir, text=True, capture_output=True)
@@ -589,7 +744,6 @@ def update():
         console.print("[yellow]No code changes made, no rollback required.[/yellow]")
         return
 
-    # 3. Upgrade Python dependencies
     console.print("[*] Upgrading Python dependencies...")
     try:
         use_uv = shutil.which("uv") is not None
@@ -603,7 +757,6 @@ def update():
         run_rollback(backup_dir)
         return
 
-    # 4. Run migrations/initialization
     console.print("[*] Running database migrations and syncing mission...")
     try:
         init_db()
@@ -619,7 +772,6 @@ def update():
         run_rollback(backup_dir)
         return
 
-    # 5. Run Self-Test
     console.print("[*] Performing complete self-test...")
     try:
         res = subprocess.run([sys.executable, "-m", "pytest", "tests/"], cwd=repo_dir, capture_output=True, text=True)
@@ -645,7 +797,6 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
     is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
     if is_termux:
         console.print("[green][✓] Termux environment detected.[/green]")
-        # Check Termux:API
         has_api = shutil.which("termux-battery-status") is not None
         if has_api:
             console.print("[green][✓] Termux:API command-line tools are installed.[/green]")
@@ -807,6 +958,22 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                     except Exception as e:
                         console.print(f"[red][x] Failed to write API key to .env: {e}[/red]")
 
+    # 6. Daemon Running Check & Self-Healing
+    info = read_daemon_info()
+    daemon_online = False
+    if info:
+        pid = info.get("pid")
+        if pid and is_pid_running(pid):
+            daemon_online = True
+
+    if daemon_online:
+        console.print("[green][✓] Shadow OS background daemon is currently running and healthy.[/green]")
+    else:
+        console.print("[yellow][!] Shadow OS background daemon is stopped.[/yellow]")
+        if repair:
+            console.print("[yellow]Attempting to repair: Starting the background daemon...[/yellow]")
+            daemon_start()
+
     if all_ok:
         console.print("\n[bold green]✓ Shadow Doctor: All diagnostic checks passed perfectly![/bold green]")
     else:
@@ -838,7 +1005,6 @@ def uninstall(
     env_file = os.path.join(SHADOW_HOME, "config", ".env")
     mission_file = os.path.join(SHADOW_HOME, "mission.md")
 
-    # 1. Deleting user data if not preserving
     if not preserve_data:
         console.print("[yellow][*] Removing user data...[/yellow]")
         for file in [db_path, db_wal, db_shm, env_file, mission_file]:
@@ -849,7 +1015,6 @@ def uninstall(
                 except Exception as e:
                     console.print(f"  [red]Failed to remove {file}: {e}[/red]")
 
-        # Remove cache, logs, backups inside SHADOW_HOME
         for sub in ["backups", "cache", "logs", "memory", "plugins", "config"]:
             path = os.path.join(SHADOW_HOME, sub)
             if os.path.exists(path):
@@ -861,7 +1026,6 @@ def uninstall(
     else:
         console.print("[green][✓] User data (database, config, mission.md) preserved.[/green]")
 
-    # 2. Deleting virtual environment
     venv_dir = os.path.join(SHADOW_HOME, "venv")
     if os.path.exists(venv_dir):
         console.print(f"[yellow][*] Deleting virtual environment ({venv_dir})...[/yellow]")
@@ -879,7 +1043,6 @@ def uninstall(
         except Exception as e:
             console.print(f"  [red]Failed to delete local .venv: {e}[/red]")
 
-    # 3. Deleting global executable wrapper
     is_termux = os.path.exists("/data/data/com.termux/files/usr") or "TERMUX_VERSION" in os.environ
     global_bin_path = ""
     if is_termux:

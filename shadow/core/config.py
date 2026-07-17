@@ -124,6 +124,15 @@ if IS_V2:
         log_level: str = "INFO"
         data_dir: str = "."
 
+        # Profile Settings
+        user_name: str = "User"
+        assistant_name: str = "Shadow"
+        life_mission: str = "Autonomous living and learning"
+
+        # Telegram Bot Settings
+        telegram_bot_token: Optional[str] = None
+        telegram_chat_id: Optional[str] = None
+
         # Provider Configurations
         openai: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gpt-4o-mini"))
         anthropic: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="claude-3-5-sonnet-latest"))
@@ -159,6 +168,15 @@ else:
         db_path: str = "shadow.db"
         log_level: str = "INFO"
         data_dir: str = "."
+
+        # Profile Settings
+        user_name: str = "User"
+        assistant_name: str = "Shadow"
+        life_mission: str = "Autonomous living and learning"
+
+        # Telegram Bot Settings
+        telegram_bot_token: Optional[str] = None
+        telegram_chat_id: Optional[str] = None
 
         # Provider Configurations
         openai: ProviderConfig = Field(default_factory=lambda: ProviderConfig(model="gpt-4o-mini"))
