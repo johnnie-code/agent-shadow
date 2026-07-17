@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from shadow.core.database import get_db_connection
@@ -12,8 +13,9 @@ class MemoryEngine:
         key: Optional[str] = None,
         tags: Optional[List[str]] = None,
         importance_level: str = "Recent",
-        importance_score: float = 1.0
-    ):
+        importance_score: float = 1.0,
+        workspace: Optional[str] = "global"
+    ) -> int:
         """
         Store a persistent memory block with level and importance score.
         Levels: 'Recent', 'Important', 'Permanent', 'Archived'
@@ -27,11 +29,38 @@ class MemoryEngine:
             importance_score = self._calculate_heuristics_score(content, tags)
 
         cursor.execute("""
-            INSERT INTO memory (category, key, content, tags, importance_level, importance_score)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (category, key, content, tags_str, importance_level, importance_score))
+            INSERT INTO memory (category, key, content, tags, importance_level, importance_score, workspace)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (category, key, content, tags_str, importance_level, importance_score, workspace))
         conn.commit()
+        last_id = cursor.lastrowid
         conn.close()
+        return last_id
+
+    def save_memory(
+        self,
+        category: str,
+        content: str,
+        key: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        importance_level: str = "Recent",
+        importance_score: Optional[float] = None,
+        workspace: Optional[str] = "global"
+    ) -> int:
+        """
+        Save a persistent memory block and return its ID.
+        """
+        if importance_score is None:
+            importance_score = self._calculate_heuristics_score(content, tags)
+        return self.add_memory(
+            category=category,
+            content=content,
+            key=key,
+            tags=tags,
+            importance_level=importance_level,
+            importance_score=importance_score,
+            workspace=workspace
+        )
 
     def _calculate_heuristics_score(self, content: str, tags: Optional[List[str]]) -> float:
         """
@@ -68,7 +97,7 @@ class MemoryEngine:
         conn.close()
         return dict(row) if row else None
 
-    def search_memories(self, query: str) -> List[Dict[str, Any]]:
+    def search_memories(self, query: str, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Search memory table. Uses a combination of keyword matching and ranking
         (by importance_score, level, and date) to return the most relevant context first.
@@ -78,15 +107,103 @@ class MemoryEngine:
         like_query = f"%{query}%"
 
         # Query matching categories, tags, or keys, ordered by importance_score desc then date desc
-        cursor.execute("""
-            SELECT * FROM memory
-            WHERE (content LIKE ? OR tags LIKE ? OR category LIKE ? OR key LIKE ?)
-              AND importance_level != 'Archived'
-            ORDER BY importance_score DESC, created_at DESC
-        """, (like_query, like_query, like_query, like_query))
+        if workspace:
+            cursor.execute("""
+                SELECT * FROM memory
+                WHERE (content LIKE ? OR tags LIKE ? OR category LIKE ? OR key LIKE ?)
+                  AND importance_level != 'Archived'
+                  AND (workspace = ? OR workspace IS NULL OR workspace = 'global' OR workspace = '')
+                ORDER BY importance_score DESC, created_at DESC
+            """, (like_query, like_query, like_query, like_query, workspace))
+        else:
+            cursor.execute("""
+                SELECT * FROM memory
+                WHERE (content LIKE ? OR tags LIKE ? OR category LIKE ? OR key LIKE ?)
+                  AND importance_level != 'Archived'
+                ORDER BY importance_score DESC, created_at DESC
+            """, (like_query, like_query, like_query, like_query))
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    def search_memory(
+        self,
+        query: str,
+        workspace: Optional[str] = None,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Search memories. If workspace is provided, returns memories scoped to that
+        workspace as well as global memories (where workspace is NULL, 'global' or empty).
+        """
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        like_query = f"%{query}%"
+
+        if workspace:
+            cursor.execute("""
+                SELECT * FROM memory
+                WHERE (content LIKE ? OR tags LIKE ? OR category LIKE ? OR key LIKE ?)
+                  AND importance_level != 'Archived'
+                  AND (workspace = ? OR workspace IS NULL OR workspace = 'global' OR workspace = '')
+                ORDER BY importance_score DESC, created_at DESC
+                LIMIT ?
+            """, (like_query, like_query, like_query, like_query, workspace, limit))
+        else:
+            cursor.execute("""
+                SELECT * FROM memory
+                WHERE (content LIKE ? OR tags LIKE ? OR category LIKE ? OR key LIKE ?)
+                  AND importance_level != 'Archived'
+                ORDER BY importance_score DESC, created_at DESC
+                LIMIT ?
+            """, (like_query, like_query, like_query, like_query, limit))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def update_memory(self, memory_id: int, **kwargs) -> bool:
+        """
+        Updates fields of a persistent memory block by ID.
+        """
+        valid_fields = {"category", "key", "content", "tags", "importance_level", "importance_score", "workspace"}
+        update_parts = []
+        params = []
+        for k, val in kwargs.items():
+            if k not in valid_fields:
+                raise ValueError(f"Invalid memory field: {k}")
+            if k == "tags" and isinstance(val, list):
+                val = ",".join(val)
+            update_parts.append(f"{k} = ?")
+            params.append(val)
+
+        if not update_parts:
+            return False
+
+        params.append(memory_id)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE memory
+            SET {", ".join(update_parts)}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, params)
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def delete_memory(self, memory_id: int) -> bool:
+        """
+        Deletes a persistent memory block by ID.
+        """
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory WHERE id = ?", (memory_id,))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
 
     def rank_memory(self, memory_id: int, level: str, score: float):
         """
@@ -104,12 +221,12 @@ class MemoryEngine:
         conn.commit()
         conn.close()
 
-    def retrieve_context(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def retrieve_context(self, query: str, limit: int = 5, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Retrieve semantic/ranked memory context for conversational queries.
         Combines relevance of query keywords with memory importance ranking.
         """
-        memories = self.search_memories(query)
+        memories = self.search_memories(query, workspace=workspace)
         # Perform scoring refinement: assign extra weight to records that contain specific query words
         query_words = set(query.lower().split())
         scored_memories = []
@@ -225,6 +342,103 @@ class MemoryEngine:
         """, (days,))
         conn.commit()
         conn.close()
+
+    def _generate_deterministic_summary(self, rows: List[Dict[str, Any]]) -> str:
+        if not rows:
+            return "No memories found matching the specified criteria."
+
+        summary_lines = [f"Deterministic Summary of {len(rows)} matching memories:"]
+        categories = {}
+        for r in rows:
+            cat = r["category"]
+            categories[cat] = categories.get(cat, 0) + 1
+
+        cat_strs = [f"{cat.capitalize()}: {count}" for cat, count in categories.items()]
+        summary_lines.append(f"- Category breakdown: {', '.join(cat_strs)}")
+
+        highlights = []
+        for r in rows[:3]:
+            key_info = f" ({r['key']})" if r.get("key") else ""
+            content_preview = r["content"][:60] + "..." if len(r["content"]) > 60 else r["content"]
+            highlights.append(f"  * [{r['category'].capitalize()}{key_info}]: {content_preview}")
+
+        if highlights:
+            summary_lines.append("- Highlights:")
+            summary_lines.extend(highlights)
+
+        if len(rows) > 3:
+            summary_lines.append(f"  * ... and {len(rows) - 3} more memories.")
+
+        return "\n".join(summary_lines)
+
+    def summarize_memory(
+        self,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        workspace: Optional[str] = None
+    ) -> str:
+        """
+        Summarizes matching memories using the active LLM provider or a deterministic fallback.
+        """
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        query_parts = []
+        params = []
+
+        if category:
+            query_parts.append("category = ?")
+            params.append(category)
+        if tags:
+            for tag in tags:
+                query_parts.append("tags LIKE ?")
+                params.append(f"%{tag}%")
+        if workspace:
+            query_parts.append("(workspace = ? OR workspace IS NULL OR workspace = 'global' OR workspace = '')")
+            params.append(workspace)
+
+        where_clause = " AND ".join(query_parts) if query_parts else "1"
+        cursor.execute(f"""
+            SELECT * FROM memory
+            WHERE {where_clause} AND importance_level != 'Archived'
+            ORDER BY importance_score DESC, created_at DESC
+        """, params)
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+        if not rows:
+            return "No memories found matching the specified criteria."
+
+        mem_texts = [
+            f"- [{r['category']}] {r['content']} (Tags: {r['tags']}, Workspace: {r['workspace']})"
+            for r in rows
+        ]
+        text_to_summarize = "\n".join(mem_texts)
+
+        prompt = (
+            "You are the Memory Engine Summarizer for PROJECT SHADOW.\n"
+            "Please summarize the following persistent memories into a concise, high-level summary paragraph:\n\n"
+            f"{text_to_summarize}"
+        )
+
+        try:
+            from shadow.providers.factory import get_provider
+            provider = get_provider()
+
+            async def run_chat():
+                res = await provider.chat([{"role": "user", "content": prompt}])
+                return res.get("content", "").strip()
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                return self._generate_deterministic_summary(rows)
+            else:
+                return asyncio.run(run_chat())
+        except Exception:
+            return self._generate_deterministic_summary(rows)
 
 # Global Memory Singleton
 memory_engine = MemoryEngine()
