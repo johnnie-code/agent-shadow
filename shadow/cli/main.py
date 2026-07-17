@@ -657,7 +657,17 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
         console.print("[yellow][!] Non-Termux environment detected. Skipping Termux:API checks.[/yellow]")
 
     # 2. Dependency Check
-    dependencies = ["pydantic", "pydantic_settings", "yaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer"]
+    import pydantic
+    is_fallback = pydantic.__version__.startswith("1.")
+    try:
+        import pydantic_settings
+    except ImportError:
+        is_fallback = True
+
+    dependencies = ["pydantic", "yaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer"]
+    if not is_fallback:
+        dependencies.append("pydantic_settings")
+
     missing_deps = []
     for dep in dependencies:
         try:
