@@ -785,23 +785,109 @@ def schedule():
 
     console.print(table)
 
-@app.command()
-def providers():
-    """
-    Display configured and active AI Provider information.
-    """
+async def test_openai_connectivity():
+    from shadow.providers.openai import OpenAIProvider
     config = get_config()
-    table = Table(title="Active AI Provider Statuses")
-    table.add_column("Provider", style="bold magenta")
-    table.add_column("Target Model", style="bold green")
-    table.add_column("Status / Active Default")
+    if not config.openai.api_key:
+        console.print("[red]✗ OpenAI[/red]: Error (Not Configured: API key is missing)")
+        return
+    try:
+        provider = OpenAIProvider()
+        await provider.chat([{"role": "user", "content": "hi"}], max_tokens=5)
+        console.print("[green]✓ OpenAI[/green]: Connected")
+    except Exception as e:
+        console.print(f"[red]✗ OpenAI[/red]: Error ({e})")
 
-    table.add_row("OpenAI", config.openai.model, "Configured" if config.default_provider == "openai" else "Inactive")
-    table.add_row("Anthropic Claude", config.anthropic.model, "Configured" if config.default_provider == "anthropic" else "Inactive")
-    table.add_row("Google Gemini", config.gemini.model, "Configured" if config.default_provider == "gemini" else "Inactive")
-    table.add_row("Local Mock Model", "shadow-mock-model", "Active (Default)" if config.default_provider == "mock" else "Ready")
+async def test_gemini_connectivity():
+    from shadow.providers.google import GeminiProvider
+    config = get_config()
+    if not config.gemini.api_key:
+        console.print("[red]✗ Gemini[/red]: Error (Not Configured: API key is missing)")
+        return
+    try:
+        provider = GeminiProvider()
+        await provider.chat([{"role": "user", "content": "hi"}], max_tokens=5)
+        console.print("[green]✓ Gemini[/green]: Connected")
+    except Exception as e:
+        console.print(f"[red]✗ Gemini[/red]: Error ({e})")
 
-    console.print(table)
+async def test_claude_connectivity():
+    from shadow.providers.anthropic import AnthropicProvider
+    config = get_config()
+    if not config.anthropic.api_key:
+        console.print("[red]✗ Claude[/red]: Error (Not Configured: API key is missing)")
+        return
+    try:
+        provider = AnthropicProvider()
+        await provider.chat([{"role": "user", "content": "hi"}], max_tokens=5)
+        console.print("[green]✓ Claude[/green]: Connected")
+    except Exception as e:
+        console.print(f"[red]✗ Claude[/red]: Error ({e})")
+
+async def test_ollama_connectivity():
+    import httpx
+    url = os.environ.get("SHADOW_OLLAMA_API_BASE") or "http://localhost:11434"
+    tags_url = f"{url.rstrip('/')}/api/tags"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(tags_url, timeout=3.0)
+            if resp.status_code == 200:
+                console.print("[green]✓ Ollama[/green]: Connected")
+            else:
+                console.print(f"[red]✗ Ollama[/red]: Error (Status {resp.status_code})")
+    except Exception:
+        console.print(f"[red]✗ Ollama[/red]: Error (Could not connect to local Ollama instance at {url})")
+
+async def test_ollama_cloud_connectivity():
+    import httpx
+    url = os.environ.get("SHADOW_OLLAMA_CLOUD_URL")
+    if not url:
+        console.print("[red]✗ Ollama Cloud[/red]: Error (Not Configured: SHADOW_OLLAMA_CLOUD_URL is missing)")
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=3.0)
+            if resp.status_code in (200, 401, 403):
+                console.print("[green]✓ Ollama Cloud[/green]: Connected")
+            else:
+                console.print(f"[red]✗ Ollama Cloud[/red]: Error (Status {resp.status_code})")
+    except Exception as e:
+        console.print(f"[red]✗ Ollama Cloud[/red]: Error (Could not connect to {url}: {e})")
+
+async def test_mock_connectivity():
+    console.print("[green]✓ Mock[/green]: Connected")
+
+async def run_providers_test():
+    console.print("[bold cyan]🔍 Testing Configured AI Providers...[/bold cyan]\n")
+    await test_openai_connectivity()
+    await test_gemini_connectivity()
+    await test_claude_connectivity()
+    await test_ollama_connectivity()
+    await test_ollama_cloud_connectivity()
+    await test_mock_connectivity()
+
+@app.command()
+def providers(
+    test: bool = typer.Option(False, "--test", "-t", help="Test connectivity of all configured providers.")
+):
+    """
+    Display configured and active AI Provider information, or test connectivity.
+    """
+    if test:
+        asyncio.run(run_providers_test())
+    else:
+        config = get_config()
+        table = Table(title="Active AI Provider Statuses")
+        table.add_column("Provider", style="bold magenta")
+        table.add_column("Target Model", style="bold green")
+        table.add_column("Status / Active Default")
+
+        table.add_row("OpenAI", config.openai.model, "Configured" if config.default_provider == "openai" else "Inactive")
+        table.add_row("Anthropic Claude", config.anthropic.model, "Configured" if config.default_provider == "anthropic" else "Inactive")
+        table.add_row("Google Gemini", config.gemini.model, "Configured" if config.default_provider == "gemini" else "Inactive")
+        table.add_row("Local Mock Model", "shadow-mock-model", "Active (Default)" if config.default_provider == "mock" else "Ready")
+
+        console.print(table)
 
 @app.command()
 def plugins():
