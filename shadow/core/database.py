@@ -28,10 +28,20 @@ def init_db():
         key TEXT,                        -- Optional key (e.g., 'user_working_style')
         content TEXT NOT NULL,
         tags TEXT,                       -- Comma-separated tags
+        importance_level TEXT DEFAULT 'Recent', -- 'Recent', 'Important', 'Permanent', 'Archived'
+        importance_score REAL DEFAULT 1.0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    try:
+        cursor.execute("ALTER TABLE memory ADD COLUMN importance_level TEXT DEFAULT 'Recent'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE memory ADD COLUMN importance_score REAL DEFAULT 1.0")
+    except Exception:
+        pass
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_category ON memory(category);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key);")
 
