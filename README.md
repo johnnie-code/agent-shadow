@@ -187,3 +187,133 @@ Shadow is being developed as a lightweight AI operating system that evolves alon
 Rather than simply responding to prompts, it continuously learns, plans, researches, reflects, and executes work that advances the user's long-term mission.
 
 The ultimate objective is to create an AI companion that functions as a proactive second brain—one capable of understanding goals, adapting strategies, coordinating specialized agents, and helping users accomplish ambitious, multi-year objectives while remaining efficient enough to run directly on an Android phone.
+
+---
+
+## Termux Installation Guide
+
+PROJECT SHADOW is fully optimized to run natively in a clean Termux environment on Android. Below are the step-by-step instructions to install, verify, and run the platform.
+
+### Prerequisites
+
+To ensure compatibility with Python 3.12 and Python 3.13 on Android, PROJECT SHADOW leverages a precompiled wheel index for native extensions (such as `pydantic-core`), eliminating the need for a complex local Rust compiler setup.
+
+### Automated One-Command Installation
+
+You can run the production-grade, idempotent automated bootstrap installer script to set up everything automatically:
+
+```bash
+pkg install wget -y
+wget -qO- https://raw.githubusercontent.com/johnnie-code/agent-shadow/main/install.sh | bash
+```
+
+Alternatively, if you have already cloned the repository:
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The bootstrap installer script will automatically:
+1. Update Termux packages
+2. Install required system dependencies (`git`, `python`, `termux-api`, `sqlite`, `ndk-sysroot`, `clang`, `make`)
+3. Set up the Python virtual environment (`.venv`)
+4. Detect Termux and install pinned dependencies using the precompiled Android wheel index for `pydantic-core`
+5. Initialize the SQLite database with WAL mode
+6. Synchronize goals from `mission.md`
+7. Create a global command wrapper so `shadow` is accessible from anywhere in your Termux terminal.
+
+---
+
+### Manual/Developer Installation (Editable Mode)
+
+For development or manual installation:
+
+1. Clone the repository and navigate into it:
+   ```bash
+   git clone https://github.com/johnnie-code/agent-shadow.git
+   cd agent-shadow
+   ```
+
+2. Create a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. Install the dependencies and package in editable mode using the precompiled wheel index:
+   ```bash
+   pip install --upgrade pip
+   pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+   ```
+
+   *Or using `uv` if installed:*
+   ```bash
+   uv pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+   ```
+
+---
+
+### Verifying the Installation
+
+After installation, verify that the entrypoints and services launch correctly:
+
+#### 1. CLI Commands Verification
+Ensure the console entrypoint and main module execute successfully:
+- Global launcher command:
+  ```bash
+  shadow --help
+  ```
+- Direct module command:
+  ```bash
+  python -m shadow.cli.main --help
+  ```
+
+#### 2. Starting FastAPI Server (Daemon)
+To boot the FastAPI server daemon in the background or foreground:
+- Foreground:
+  ```bash
+  shadow start --port 8000
+  ```
+- Background:
+  ```bash
+  shadow start --port 8000 --background
+  ```
+- Query system status:
+  ```bash
+  shadow status
+  ```
+- Stopping background daemon:
+  ```bash
+  shadow stop
+  ```
+
+#### 3. Launching the Rich TUI Dashboard
+The interactive terminal dashboard can be launched from any terminal tab:
+```bash
+shadow tui
+```
+
+#### 4. Running the Pytest Suite
+Run the full test suite from the repository root:
+```bash
+python -m pytest tests/
+```
+
+---
+
+### Troubleshooting & Compatibility Notes
+
+#### Python 3.13 Support on Termux
+Termux default Python package is Python 3.13. Standard `pydantic-core` compiles from source, which fails on Termux without a heavy Rust toolchain and appropriate compiler flags. We support Python 3.13 natively by using `--extra-index-url https://eutalix.github.io/android-pydantic-core/` which supplies prebuilt Android wheels (`cp313-android`) of `pydantic-core`.
+
+#### Typer and Click Warnings
+To prevent `'make_metavar' signature compatibility errors` when using older versions of typer with newer click, the `click` dependency is strictly pinned to `8.1.8`. Do not manually upgrade click to a newer version.
+
+#### Termux:API Integration
+If the battery or notification integrations fail, ensure you have:
+1. Installed the `Termux:API` app from F-Droid.
+2. Installed the corresponding package inside Termux:
+   ```bash
+   pkg install termux-api
+   ```

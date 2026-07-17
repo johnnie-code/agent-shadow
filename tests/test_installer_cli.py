@@ -95,8 +95,10 @@ def test_uninstall_cancelled():
 
 @patch("shutil.rmtree")
 @patch("os.remove")
-def test_uninstall_preserve_data(mock_remove, mock_rmtree):
+@patch("os.path.exists")
+def test_uninstall_preserve_data(mock_exists, mock_remove, mock_rmtree):
     # Test uninstall and preserve user data
+    mock_exists.side_effect = lambda path: True if path == ".venv" else False
     result = runner.invoke(app, ["uninstall"], input="y\ny\n")
     assert result.exit_code == 0
     assert "User data (database, config, mission.md) preserved" in result.stdout

@@ -150,13 +150,23 @@ if [ "$USE_UV" = true ]; then
     uv venv .venv
     log_success "Virtual environment created with uv."
     log_header "Installing Python dependencies with uv..."
-    uv pip install -e .
+    if [ "$IS_TERMUX" = true ]; then
+        log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
+        uv pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+    else
+        uv pip install -e .
+    fi
 else
     $PYTHON_CMD -m venv .venv
     log_success "Virtual environment created with python -m venv."
     log_header "Installing Python dependencies with pip..."
     .venv/bin/pip install --upgrade pip
-    .venv/bin/pip install -e .
+    if [ "$IS_TERMUX" = true ]; then
+        log_warn "Termux detected. Using precompiled wheel index to avoid compiling native extensions..."
+        .venv/bin/pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
+    else
+        .venv/bin/pip install -e .
+    fi
 fi
 log_success "All Python dependencies installed."
 
