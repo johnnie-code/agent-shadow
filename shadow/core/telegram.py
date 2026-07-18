@@ -90,11 +90,15 @@ class TelegramCompanion:
                 "• `/status` — Get active system metrics and daemon status\n"
                 "• `/goals` — List active structured milestones and completion %\n"
                 "• `/mission` — View your life mission statement\n"
-                "• `/research` — Inspect recently discovered opportunities\n"
+                "• `/research <query>` — Inspect opportunities or perform scientific search\n"
+                "• `/scrape <url>` — Extract clean markdown text from webpage\n"
+                "• `/crawl <url>` — Crawl and index entire documentation site\n"
+                "• `/map <url>` — Retrieve sitemap lists of site paths\n"
+                "• `/web` — Inspect Web Intelligence diagnostics\n"
                 "• `/plan` — Generate/view planning strategy and estimates\n"
                 "• `/add <task>` — Create a new action item in the task queue\n"
                 "• `/remind <text>` — Save a persistent reminder in memory\n"
-                "• `/search <query>` — Search long-term memories\n"
+                "• `/search <query>` — Dual Search long-term memories and the live web\n"
                 "• `/capabilities` — Inspect dynamically discovered capabilities\n"
                 "• `/health` — Run live system diagnostics and health scoring\n"
                 "• `/providers` — Discover and monitor configured AI providers\n"
@@ -120,8 +124,23 @@ class TelegramCompanion:
         elif cmd == "/mission":
             return await self._handle_mission()
 
-        elif cmd == "/research":
-            return await self._handle_research()
+        elif cmd.startswith("/research"):
+            return await self._handle_research_or_feed(text_clean)
+
+        elif cmd.startswith("/scrape"):
+            url = text_clean[len("/scrape"):].strip()
+            return await self._handle_scrape(url)
+
+        elif cmd.startswith("/crawl"):
+            url = text_clean[len("/crawl"):].strip()
+            return await self._handle_crawl(url)
+
+        elif cmd.startswith("/map"):
+            url = text_clean[len("/map"):].strip()
+            return await self._handle_map(url)
+
+        elif cmd.startswith("/web"):
+            return await self._handle_web_status(text_clean)
 
         elif cmd == "/plan":
             return await self._handle_plan()
@@ -312,13 +331,108 @@ class TelegramCompanion:
         if not query:
             return "⚠️ Usage: `/search <query>`\nExample: `/search scholarship`"
 
+        # 1. Search memory
         res = memory_engine.search_memories(query)
-        if not res:
-            return f"🔍 No memories found matching \"{query}\"."
+        reply = f"🔍 💾 *Memory Matches for \"{query}\"*:\n"
+        if res:
+            for m in res[:3]:
+                content_preview = m['content'][:150].replace('\n', ' ') + "..." if len(m['content']) > 150 else m['content']
+                reply += f"• *[{m['category'].upper()}]*: {content_preview}\n"
+        else:
+            reply += "No local memories matching.\n"
 
-        reply = f"🔍 *Search matches for \"{query}\"*:\n\n"
-        for m in res[:5]:
-            reply += f"• *[{m['category'].upper()}]* ({m['created_at']}):\n  {m['content']}\n\n"
+        # 2. Search web
+        from shadow.core.web.search import global_search_engine
+        try:
+            web_res = await global_search_engine.search(query)
+            data = web_res.get("data", [])
+            reply += f"\n🌐 *Web Matches for \"{query}\"*:\n"
+            if data:
+                for item in data[:3]:
+                    meta = item.get("metadata") or {}
+                    title = meta.get("title") or "Result"
+                    reply += f"• *{title}*:\n  {item.get('url')}\n"
+            else:
+                reply += "No web results found.\n"
+        except Exception:
+            pass
+
+        return reply
+
+    async def _handle_scrape(self, url: str) -> str:
+        if not url:
+            return "⚠️ Usage: `/scrape <url>`\nExample: `/scrape https://example.com`"
+        from shadow.core.web.scraper import Scraper
+        scraper = Scraper()
+        res = await scraper.scrape_page(url)
+        if res.get("success"):
+            content = res.get("content", "")
+            return f"✅ *Scraped Successfully ({res.get('provider')})*:\n\n*Preview*:\n{content[:600]}..."
+        return f"❌ *Scrape Failed*: {res.get('error')}"
+
+    async def _handle_crawl(self, url: str) -> str:
+        if not url:
+            return "⚠️ Usage: `/crawl <url>`\nExample: `/crawl https://example.com`"
+        from shadow.core.web.crawler import Crawler
+        crawler = Crawler(depth_limit=2, max_pages=10) # lighter depth for telegram
+        res = await crawler.crawl(url)
+        if res.get("success"):
+            return f"✅ *Crawl Completed*:\nSuccessfully scraped and indexed *{res.get('pages_crawled')}* pages from {url}."
+        return f"❌ *Crawl Failed*: {res.get('error')}"
+
+    async def _handle_map(self, url: str) -> str:
+        if not url:
+            return "⚠️ Usage: `/map <url>`\nExample: `/map https://example.com`"
+        from shadow.core.web.manager import web_provider_manager
+        provider = web_provider_manager.determine_best_provider("map")
+        res = await provider.map_site(url)
+        links = res.get("links", [])
+        if links:
+            links_list = "\n".join(f"• {link}" for link in links[:10])
+            return f"🗺️ *Mapped {len(links)} URLs from {url}*:\n\n{links_list}"
+        return "⚠️ No sitemaps or URLs discovered."
+
+    async def _handle_web_status(self, text: str) -> str:
+        from shadow.core.web.cache import global_web_cache
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        providers_list = scan["sectors"].get("web_intelligence", [])
+        cache_stats = global_web_cache.get_stats()
+
+        reply = "🌐 *Web Intelligence Health & Diagnostics*:\n\n"
+        for p in providers_list:
+            pname = p.name.replace(" Web Intelligence Provider", "")
+            status_emoji = "✓" if p.enabled else "✗"
+            reply += f"• *{pname}*: {status_emoji} {p.health.upper()} | Version: {p.version}\n"
+
+        reply += f"\n*Cache Stats*:\n"
+        reply += f"• Cached URLs: {cache_stats['cache_size']}\n"
+        reply += f"• Active entries: {cache_stats['active_entries']}"
+        return reply
+
+    async def _handle_research_or_feed(self, text_clean: str) -> str:
+        query = text_clean[len("/research"):].strip()
+        if not query:
+            return await self._handle_research()
+
+        from shadow.core.web.manager import web_provider_manager
+        provider = web_provider_manager.determine_best_provider("scientific papers")
+        res = await provider.research_index(query)
+        papers = res.get("papers", [])
+        github = res.get("github", [])
+
+        reply = f"🔬 *Scientific and Engineering Research for \"{query}\"*:\n\n"
+        if papers:
+            reply += "*Papers Found*:\n"
+            for p in papers[:3]:
+                reply += f"• *{p.get('title')}*\n  Citation: {p.get('citation')}\n"
+        if github:
+            reply += "\n*GitHub References*:\n"
+            for g in github[:3]:
+                reply += f"• {g.get('repo')}: {g.get('issue') or g.get('title')}\n"
+
+        if not papers and not github:
+            reply += "No research matches found."
         return reply
 
     async def _handle_capabilities(self) -> str:
