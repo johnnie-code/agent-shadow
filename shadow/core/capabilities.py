@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from shadow.core.config import get_config, SHADOW_HOME
 from shadow.core.database import get_db_connection
 from shadow.providers.manager import provider_manager
-from shadow.core.mcp_manager import mcp_manager
 from shadow.tools.registry import tool_registry
 from shadow.skills.skills import skills_registry
 
@@ -280,8 +279,12 @@ class CapabilityScanner:
 
     async def discover_mcp(self) -> List[Capability]:
         """Inspects the Model Context Protocol registry dynamically."""
-        from shadow.core.mcp_manager import mcp_available
-        servers = mcp_manager.get_db_servers()
+        try:
+            from shadow.core.mcp_manager import mcp_available, mcp_manager
+            servers = mcp_manager.get_db_servers()
+        except ImportError:
+            mcp_available = False
+            servers = []
         capabilities = []
 
         for s in servers:
@@ -817,7 +820,11 @@ class CapabilityPlanner:
     def analyze_missing_capability(cls, query: str) -> Optional[Dict[str, Any]]:
         """Identifies if a query refers to an uninstalled or missing MCP server."""
         query_lower = query.lower()
-        installed_mcp_names = [s["name"].lower() for s in mcp_manager.get_db_servers()]
+        try:
+            from shadow.core.mcp_manager import mcp_manager
+            installed_mcp_names = [s["name"].lower() for s in mcp_manager.get_db_servers()]
+        except ImportError:
+            installed_mcp_names = []
 
         for kw, details in cls.SUGGESTED_MCP_SERVERS.items():
             if kw in query_lower:
