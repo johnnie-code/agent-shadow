@@ -56,6 +56,10 @@ class UnifiedToolEngine:
         if native_tool:
             return native_tool
 
+        from shadow.core.mcp_manager import mcp_available
+        if not mcp_available:
+            return None
+
         # 2. MCP Tool check
         if "." in name:
             parts = name.split(".", 1)
@@ -92,6 +96,10 @@ class UnifiedToolEngine:
         # Add native
         all_tools.extend(tool_registry.list_tools())
 
+        from shadow.core.mcp_manager import mcp_available
+        if not mcp_available:
+            return all_tools
+
         # Add registered MCP tools
         servers = mcp_manager.get_db_servers(workspace)
         for s in servers:
@@ -111,62 +119,68 @@ class UnifiedToolEngine:
         """
         text = f"{task_title} {task_description}".lower()
 
-        # Workspace scoped overrides first
-        # E.g., Notion integration
-        if "notion" in text:
-            # Check if Notion MCP is installed
-            servers = mcp_manager.get_db_servers(workspace)
-            for s in servers:
-                if "notion" in s["name"].lower():
-                    try:
-                        tools = json.loads(s["tools"] or "[]")
-                        # Return first matching tool
-                        if tools:
-                            return f"{s['name']}.{tools[0]}"
-                    except Exception:
-                        pass
+        from shadow.core.mcp_manager import mcp_available
+        if mcp_available:
+            # Workspace scoped overrides first
+            # E.g., Notion integration
+            if "notion" in text:
+                # Check if Notion MCP is installed
+                servers = mcp_manager.get_db_servers(workspace)
+                for s in servers:
+                    if "notion" in s["name"].lower():
+                        try:
+                            tools = json.loads(s["tools"] or "[]")
+                            # Return first matching tool
+                            if tools:
+                                return f"{s['name']}.{tools[0]}"
+                        except Exception:
+                            pass
 
-        # E.g., GitHub integration
-        if "github" in text or "repo" in text:
-            servers = mcp_manager.get_db_servers(workspace)
-            for s in servers:
-                if "github" in s["name"].lower() or "git" in s["name"].lower():
-                    try:
-                        tools = json.loads(s["tools"] or "[]")
-                        # e.g., open_repo or create_issue
-                        for t in tools:
-                            if "open" in t or "create" in t:
-                                return f"{s['name']}.{t}"
-                        if tools:
-                            return f"{s['name']}.{tools[0]}"
-                    except Exception:
-                        pass
+            # E.g., GitHub integration
+            if "github" in text or "repo" in text:
+                servers = mcp_manager.get_db_servers(workspace)
+                for s in servers:
+                    if "github" in s["name"].lower() or "git" in s["name"].lower():
+                        try:
+                            tools = json.loads(s["tools"] or "[]")
+                            # e.g., open_repo or create_issue
+                            for t in tools:
+                                if "open" in t or "create" in t:
+                                    return f"{s['name']}.{t}"
+                            if tools:
+                                return f"{s['name']}.{tools[0]}"
+                        except Exception:
+                            pass
 
-        # E.g., Firecrawl or Fetch integration
-        if "documentation" in text or "search docs" in text or "fetch" in text or "firecrawl" in text:
-            servers = mcp_manager.get_db_servers(workspace)
-            for s in servers:
-                if any(x in s["name"].lower() for x in ("firecrawl", "fetch", "brave", "search")):
-                    try:
-                        tools = json.loads(s["tools"] or "[]")
-                        if tools:
-                            return f"{s['name']}.{tools[0]}"
-                    except Exception:
-                        pass
+            # E.g., Firecrawl or Fetch integration
+            if "documentation" in text or "search docs" in text or "fetch" in text or "firecrawl" in text:
+                servers = mcp_manager.get_db_servers(workspace)
+                for s in servers:
+                    if any(x in s["name"].lower() for x in ("firecrawl", "fetch", "brave", "search")):
+                        try:
+                            tools = json.loads(s["tools"] or "[]")
+                            if tools:
+                                return f"{s['name']}.{tools[0]}"
+                        except Exception:
+                            pass
 
-        # Standard Fallbacks
-        if "search" in text or "query" in text:
-            # Check if Brave Search or Google Search MCP is installed
-            servers = mcp_manager.get_db_servers(workspace)
-            for s in servers:
-                if "brave" in s["name"].lower() or "search" in s["name"].lower():
-                    try:
-                        tools = json.loads(s["tools"] or "[]")
-                        if tools:
-                            return f"{s['name']}.{tools[0]}"
-                    except Exception:
-                        pass
-            return "web_search"
+            # Standard Fallbacks
+            if "search" in text or "query" in text:
+                # Check if Brave Search or Google Search MCP is installed
+                servers = mcp_manager.get_db_servers(workspace)
+                for s in servers:
+                    if "brave" in s["name"].lower() or "search" in s["name"].lower():
+                        try:
+                            tools = json.loads(s["tools"] or "[]")
+                            if tools:
+                                return f"{s['name']}.{tools[0]}"
+                        except Exception:
+                            pass
+                return "web_search"
+
+        else:
+            if "search" in text or "query" in text:
+                return "web_search"
 
         return "read_file"
 
