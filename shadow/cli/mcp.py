@@ -5,7 +5,10 @@ from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from shadow.core.mcp_manager import mcp_manager
+try:
+    from shadow.core.mcp_manager import mcp_manager
+except ImportError:
+    mcp_manager = None
 
 mcp_app = typer.Typer(name="mcp", help="Manage external Model Context Protocol (MCP) servers.")
 console = Console()
