@@ -6,6 +6,25 @@ from shadow.cli.onboard import run_onboarding
 from shadow.memory.memory import memory_engine
 
 def test_onboarding_non_interactive():
+    # Clear environment variables starting with SHADOW_ to prevent pollution
+    for k in list(os.environ.keys()):
+        if k.startswith("SHADOW_") and k != "SHADOW_HOME":
+            os.environ.pop(k)
+
+    # Clean up any leftover configuration files from previous tests
+    env_path = os.path.join(SHADOW_HOME, "config", ".env")
+    mission_path = os.path.join(SHADOW_HOME, "mission.md")
+    if os.path.exists(env_path):
+        try:
+            os.remove(env_path)
+        except Exception:
+            pass
+    if os.path.exists(mission_path):
+        try:
+            os.remove(mission_path)
+        except Exception:
+            pass
+
     # Setup clean sandbox DB and configurations
     reset_config(None)
     init_db()

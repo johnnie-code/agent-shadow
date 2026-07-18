@@ -1306,6 +1306,179 @@ async def run_providers_test():
     await test_mock_connectivity()
 
 @app.command()
+def capabilities():
+    """
+    Display a fully dynamic overview of Project Shadow capabilities from live system state.
+    """
+    from shadow.core.capabilities import capability_scanner
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    sectors = scan["sectors"]
+
+    table = Table(title="Live Architectural Capabilities Registry")
+    table.add_column("Category", style="bold cyan")
+    table.add_column("Name / Subsystem", style="bold green")
+    table.add_column("Status / Details", style="bold yellow")
+    table.add_column("Version", style="magenta")
+
+    # AI Providers
+    for p in sectors["ai_providers"]:
+        status = f"[green]active[/green]" if p.enabled else "[dim]inactive[/dim]"
+        if p.details.get("default_provider"):
+            status += " [bold magenta](Default Brain)[/bold magenta]"
+        table.add_row("AI Provider", p.name, status, p.version)
+
+    # MCP Servers
+    for m in sectors["mcp_servers"]:
+        status = f"[green]online[/green]" if m.health == "healthy" else f"[red]{m.details.get('status')}[/red]"
+        table.add_row("MCP Server", m.name, f"{status} ({m.details.get('tools_count')} tools)", m.version)
+
+    # Native Tools
+    native_count = len(sectors["native_tools"])
+    table.add_row("Native Toolset", "System Tools", f"[green]healthy[/green] ({native_count} tools registered)", "1.0")
+
+    # Sandbox
+    sb = sectors["sandbox"]
+    sb_details = sb.details
+    sb_status = f"[green]healthy[/green] ({sb_details.get('active_sandboxes')} active)"
+    table.add_row("Sandbox", sb.name, sb_status, sb.version)
+
+    # Memory
+    mem = sectors["memory"]
+    mem_details = mem.details
+    mem_status = f"[green]healthy[/green] ({mem_details.get('memory_records')} records, {mem_details.get('active_goals')} goals)"
+    table.add_row("Memory Store", mem.name, mem_status, mem.version)
+
+    # Background Services
+    bg = sectors["background_services"]
+    bg_details = bg.details
+    bg_status = f"Daemon: [green]{bg_details.get('daemon')}[/green] | Bot: [cyan]{bg_details.get('Telegram')}[/cyan]"
+    table.add_row("Daemon Loop", bg.name, bg_status, bg.version)
+
+    # API Connectors
+    apis = sectors["apis"]
+    api_status = f"[green]healthy[/green] ({apis.details.get('authenticated_apis')} auths set)"
+    table.add_row("API Engine", apis.name, api_status, apis.version)
+
+    # Plugins
+    plugins_count = len(sectors["plugins"])
+    table.add_row("Plugin Registry", "System Extensions", f"[green]healthy[/green] ({plugins_count} plugins active)", "1.0")
+
+    console.print(table)
+
+@app.command()
+def health():
+    """
+    Display a live, comprehensive system health score and sector-by-sector breakdown.
+    """
+    from shadow.core.capabilities import capability_scanner, CapabilityReport
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    health_info = scan["health"]
+
+    # Overall Health Score Panel
+    color = "green" if health_info.status == "healthy" else "yellow" if health_info.status == "degraded" else "red"
+    score_panel = Panel.fit(
+        f"[bold {color}]{health_info.score}%[/bold {color}]",
+        title="[bold]Overall System Health[/bold]",
+        border_style=color
+    )
+    console.print(score_panel)
+
+    # Sector Breakdown
+    sectors = scan["sectors"]
+    table = Table(title="Live Sector Health Diagnostic Status")
+    table.add_column("System Sector", style="bold cyan")
+    table.add_column("Status", style="bold")
+    table.add_column("Live Diagnostic Message", style="dim")
+
+    # AI Providers
+    provs_active = health_info.metrics.get("active_providers", 0)
+    provs_total = health_info.metrics.get("configured_providers", 0)
+    prov_status = "[green]✓ Healthy[/green]" if provs_active == provs_total and provs_total > 0 else "[yellow]⚠ Degraded[/yellow]"
+    table.add_row("AI Providers", prov_status, f"{provs_active}/{provs_total} configured engines are connected and online")
+
+    # MCP
+    mcp_active = health_info.metrics.get("mcp_active", 0)
+    mcp_total = len(sectors["mcp_servers"])
+    mcp_status = "[green]✓ Healthy[/green]" if mcp_active == mcp_total else "[yellow]⚠ Degraded[/yellow]"
+    table.add_row("MCP Servers", mcp_status, f"{mcp_active}/{mcp_total} servers actively connected")
+
+    # Sandbox
+    sb = sectors["sandbox"]
+    sb_status = "[green]✓ Healthy[/green]" if sb.health == "healthy" else "[red]✗ Offline[/red]"
+    table.add_row("Sandbox Computer", sb_status, f"{sb.details.get('active_sandboxes')} sandboxes | {sb.details.get('storage_usage_mb')}MB storage used")
+
+    # Memory
+    mem = sectors["memory"]
+    mem_status = "[green]✓ Healthy[/green]" if mem.health == "healthy" else "[yellow]⚠ Degraded[/yellow]"
+    table.add_row("Memory Store", mem_status, f"{mem.details.get('memory_records')} SQLite records | {mem.details.get('active_goals')} active goals")
+
+    # Background Jobs
+    bg = sectors["background_services"]
+    bg_status = "[green]✓ Running[/green]" if bg.details.get("daemon") == "running" else "[red]✗ Stopped[/red]"
+    table.add_row("Background Services", bg_status, f"Daemon is {bg.details.get('daemon')}, Telegram bot is {bg.details.get('Telegram')}")
+
+    console.print(table)
+
+@app.command()
+def apis():
+    """
+    List automatically discovered API integrations, OpenAPI specs, and authenticated clients.
+    """
+    from shadow.core.capabilities import capability_scanner
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    apis_cap = scan["sectors"]["apis"]
+    details = apis_cap.details
+
+    table = Table(title="Discovered API Integrations & Clients")
+    table.add_column("API Integration", style="bold green")
+    table.add_column("Type / Scheme", style="cyan")
+    table.add_column("Authenticated Status", style="bold yellow")
+
+    for api in details.get("installed_api_integrations", []):
+        auth_status = "[green]authenticated[/green]" if "API" in api else "[dim]optional[/dim]"
+        table.add_row(api, "REST / JSON", auth_status)
+
+    console.print(table)
+
+    # Secondary specifications table
+    spec_table = Table(title="Cached OpenAPI Specs & Generated Clients")
+    spec_table.add_column("Specification / Client", style="bold green")
+    spec_table.add_column("Integration Source", style="magenta")
+
+    for spec in details.get("openapi_specs", []):
+        spec_table.add_row(spec, "OpenAPI Spec (JSON)")
+    for client in details.get("generated_clients", []):
+        spec_table.add_row(client, "On-The-Fly HTTP Client")
+
+    console.print(spec_table)
+
+@app.command()
+def tools():
+    """
+    List all automatically discovered native tools and workspace-scoped MCP tools.
+    """
+    from shadow.core.capabilities import capability_scanner
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+
+    table = Table(title="Live Registered Tools & Commands Registry")
+    table.add_column("Tool / Command Name", style="bold green")
+    table.add_column("Source", style="cyan")
+    table.add_column("Safety Level", style="magenta")
+    table.add_column("Description", style="dim")
+
+    # Native Tools
+    for t in scan["sectors"]["native_tools"]:
+        safety_level = t.capabilities[0] if t.capabilities else "N/A"
+        table.add_row(t.name, "[blue]native[/blue]", safety_level, t.details.get("description", ""))
+
+    # MCP Tools
+    for m in scan["sectors"]["mcp_servers"]:
+        if m.details.get("tools_count", 0) > 0:
+            table.add_row(f"{m.name}.*", "[yellow]mcp[/yellow]", "L0 / L2", f"Tools discovered on MCP server '{m.name}'")
+
+    console.print(table)
+
+@app.command()
 def providers(
     test: bool = typer.Option(False, "--test", "-t", help="Test connectivity of all configured providers.")
 ):
@@ -1315,62 +1488,50 @@ def providers(
     if test:
         asyncio.run(run_providers_test())
     else:
-        config = get_config()
+        from shadow.core.capabilities import capability_scanner
+        scan = asyncio.run(capability_scanner.scan_all(force=True))
+        providers_cap = scan["sectors"]["ai_providers"]
 
-        # If active default is ollama, print example output format
-        if config.default_provider == "ollama":
-            mode_name = "Ollama Cloud" if config.ollama.mode == "cloud" else "Ollama Local"
-            console.print(f"\n[bold]{mode_name}[/bold]")
-            console.print(f"Model: {config.ollama.model or ('gpt-oss:120b-cloud' if config.ollama.mode == 'cloud' else 'llama3')}")
-            console.print("Status: Connected\n")
-
-        table = Table(title="Active AI Provider Statuses")
+        table = Table(title="Active AI Provider Statuses (Live Discovery)")
         table.add_column("Provider", style="bold magenta")
-        table.add_column("Target Model", style="bold green")
-        table.add_column("Status / Active Default")
+        table.add_column("Status / Active Default", style="bold")
+        table.add_column("Latency (ms)", style="cyan")
+        table.add_column("Supported Capabilities", style="green")
 
-        table.add_row("OpenAI", config.openai.model, "Configured" if config.default_provider == "openai" else "Inactive")
-        table.add_row("Anthropic Claude", config.anthropic.model, "Configured" if config.default_provider == "anthropic" else "Inactive")
-        table.add_row("Google Gemini", config.gemini.model, "Configured" if config.default_provider == "gemini" else "Inactive")
-
-        ollama_cloud_status = "Inactive"
-        ollama_local_status = "Inactive"
-        if config.default_provider == "ollama":
-            if config.ollama.mode == "cloud":
-                ollama_cloud_status = "Active (Default)"
-                ollama_local_status = "Ready"
-            else:
-                ollama_local_status = "Active (Default)"
-                ollama_cloud_status = "Ready"
-        else:
-            ollama_cloud_status = "Ready"
-            ollama_local_status = "Ready"
-
-        table.add_row("Ollama Cloud", config.ollama.model or "gpt-oss:120b-cloud", ollama_cloud_status)
-        table.add_row("Ollama Local", config.ollama.model or "llama3", ollama_local_status)
-        table.add_row("Local Mock Model", "shadow-mock-model", "Active (Default)" if config.default_provider == "mock" else "Ready")
+        for p in providers_cap:
+            status = "[green]Active (Default)[/green]" if p.details.get("default_provider") else ("[green]Ready[/green]" if p.enabled else "[dim]Inactive[/dim]")
+            latency = f"{p.details.get('latency_ms')} ms" if p.details.get('latency_ms', -1.0) >= 0 else "N/A"
+            table.add_row(
+                p.name,
+                status,
+                latency,
+                ", ".join(p.capabilities)
+            )
 
         console.print(table)
 
 @app.command()
 def plugins():
     """
-    List automatically discovered plugins, core tools, and skills.
+    List automatically discovered plugins, Python plugins, MCP plugins, and Tool plugins.
     """
-    tool_registry.discover_tools()
-    tools = tool_registry.list_tools()
-    skills = skills_registry.list_skills()
+    from shadow.core.capabilities import capability_scanner
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    plugins_list = scan["sectors"]["plugins"]
 
-    table = Table(title="Discovered Tools & Extensions")
-    table.add_column("Name", style="bold green")
-    table.add_column("Type", style="bold cyan")
-    table.add_column("Safety Level", style="magenta")
+    table = Table(title="Discovered Plugins & System Extensions")
+    table.add_column("Extension Name", style="bold green")
+    table.add_column("Plugin Category", style="cyan")
+    table.add_column("Discovered Capabilities", style="magenta")
+    table.add_column("Version", style="yellow")
 
-    for tool in tools:
-        table.add_row(tool.name, "Plugin Tool", f"Level {tool.safety_level}")
-
-    for skill in skills:
-        table.add_row(skill.name, f"Core Skill (v{skill.version})", "N/A")
+    for p in plugins_list:
+        table.add_row(
+            p.name,
+            p.details.get("type", "System Plugin"),
+            ", ".join(p.capabilities),
+            p.version
+        )
 
     console.print(table)
 

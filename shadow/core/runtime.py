@@ -10,6 +10,7 @@ from shadow.goals.executor import execution_engine
 from shadow.goals.generator import TaskGenerator
 from shadow.goals.scanner import OpportunityScanner
 from shadow.memory.memory import memory_engine
+from shadow.core.capabilities import capability_scanner, capability_planner
 
 class ConversationEngine:
     def __init__(self, session_id: str = "default_cli"):
@@ -37,6 +38,71 @@ class ConversationEngine:
 
     async def chat(self, user_message: str, session_id: Optional[str] = None) -> str:
         active_session = session_id or self.session_id
+
+        # Check Capability Planner first for missing capabilities/MCPs
+        missing_cap = capability_planner.analyze_missing_capability(user_message)
+        if missing_cap:
+            config_details = missing_cap["suggested_config"]
+            return (
+                f"I don't currently have an MCP server for {missing_cap['keyword'].capitalize()}. "
+                f"I found one ({config_details['name']}) that supports your request: \"{config_details['description']}\". "
+                f"I can install and configure it with your approval."
+            )
+
+        # Check if the user is asking about our capabilities
+        user_msg_lower = user_message.lower().strip()
+        is_capabilities_query = any(phrase in user_msg_lower for phrase in [
+            "what can you do", "what you can do", "show capabilities", "your capabilities",
+            "list capabilities", "what capabilities", "system capabilities", "tell me what you can do"
+        ])
+        if is_capabilities_query:
+            scan = await capability_scanner.scan_all(force=True)
+            sectors = scan["sectors"]
+            health_info = scan["health"]
+
+            active_brain = next((p for p in sectors["ai_providers"] if p.details.get("default_provider")), None)
+            brain_name = active_brain.name if active_brain else "Unknown"
+
+            mcp_running = [m.name for m in sectors["mcp_servers"] if m.health == "healthy"]
+            mcp_stopped = [m.name for m in sectors["mcp_servers"] if m.health != "healthy" and m.enabled]
+
+            native_tools_count = len(sectors["native_tools"])
+            plugins_count = len(sectors["plugins"])
+
+            sandbox_details = sectors["sandbox"].details
+            mem_details = sectors["memory"].details
+
+            response = (
+                f"🤖 **PROJECT SHADOW — Live Architectural Capabilities Report** (System Health: {health_info.score}%)\n\n"
+                f"I have inspected my own runtime architecture and verified the following live subsystems:\n\n"
+                f"🧠 **AI Core (Reasoning Brain)**\n"
+                f"• Active Provider: **{brain_name}**\n"
+                f"• Configured Providers: {', '.join([p.name for p in sectors['ai_providers'] if p.enabled])}\n\n"
+                f"🔌 **Model Context Protocol (MCP)**\n"
+                f"• Connected Servers: {', '.join(mcp_running) or 'None'}\n"
+                f"• Available Tools (MCP): {sum(m.details.get('tools_count', 0) for m in sectors['mcp_servers'])} tools discovered\n"
+                f"• Inactive Servers: {', '.join(mcp_stopped) or 'None'}\n\n"
+                f"🛠 **Native Tools & Plugins**\n"
+                f"• Registered Native Tools: **{native_tools_count}** tools (including Git, Sandbox, Browser, Android Build, Filesystem, Search, Memory, Planner)\n"
+                f"• Active System Plugins: **{plugins_count}** plugins discovered (including Headless Playwright Browser, Gradle Compiler Suite, and registered Skill plugins)\n\n"
+                f"📦 **Sandbox Container Subsystem**\n"
+                f"• Active Sandboxes: {sandbox_details.get('active_sandboxes', 0)} ({sandbox_details.get('idle_sandboxes', 0)} idle)\n"
+                f"• Resource Footprint: {sandbox_details.get('storage_usage_mb', 0.0)} MB Disk | {sandbox_details.get('ram_usage_mb', 0.0)} MB RAM | {sandbox_details.get('cpu_percent', 0.0)}% CPU\n"
+                f"• Checkpoint Snapshots: {sandbox_details.get('snapshots_total', 0)} snapshots | {sandbox_details.get('workspace_files_count', 0)} workspace files\n\n"
+                f"💾 **Long-Term Memory & Goals**\n"
+                f"• Stored Memory Blocks: {mem_details.get('memory_records', 0)} sqlite records\n"
+                f"• Notebook Checkpoints: {mem_details.get('notebook_entries', 0)} notes logged\n"
+                f"• Active Milestones & Goals: {mem_details.get('active_goals', 0)} pending (with {mem_details.get('completed_goals', 0)} completed)\n\n"
+                f"🔔 **Background Services**\n"
+                f"• Daemon Server: **{sectors['background_services'].details.get('daemon', 'stopped').upper()}**\n"
+                f"• Telegram Companion: **{sectors['background_services'].details.get('Telegram', 'disabled').upper()}**\n"
+                f"• Autonomous reasoning loops: **{sectors['background_services'].details.get('autonomous_workers', 'idle').upper()}**\n\n"
+                f"📡 **APIs & Connectors**\n"
+                f"• Discovered APIs: {', '.join(sectors['apis'].details.get('installed_api_integrations', []))}\n"
+                f"• Secure Authenticated Integrations: {sectors['apis'].details.get('authenticated_apis', 0)} credentials set\n\n"
+                f"What would you like me to orchestrate today?"
+            )
+            return response
 
         # Retrieve context from long-term memory
         from shadow.memory.memory import memory_engine
