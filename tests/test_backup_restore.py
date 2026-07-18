@@ -27,7 +27,7 @@ def test_backup_and_restore_commands():
     # 2. Verify backup folder is created
     backup_root = os.path.join(SHADOW_HOME, "backups")
     assert os.path.exists(backup_root)
-    backups = sorted(os.listdir(backup_root))
+    backups = sorted([d for d in os.listdir(backup_root) if d.startswith("backup_")])
     assert len(backups) > 0
 
     backup_name = backups[-1]
@@ -40,10 +40,13 @@ def test_backup_and_restore_commands():
 
     # 3. Run restore command (interactively confirm y)
     result = runner.invoke(app, ["restore", backup_name], input="y\n")
+    print("RESTORE RESULT:", result.stdout)
     assert result.exit_code == 0
     assert "✓ Restoration completed successfully" in result.stdout
 
     # 4. Verify files are restored
+    print("ENV FILE EXISTS:", os.path.exists(env_file))
+    print("BACKUP DIR CONTENT:", os.listdir(os.path.join(backup_root, backup_name)))
     assert os.path.exists(env_file)
     assert os.path.exists(mission_file)
     with open(env_file, "r") as f:
