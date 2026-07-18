@@ -55,5 +55,42 @@ class SandboxPluginRegistry:
         return self._emulators.get(name)
 
 
+class CapabilityRegistry:
+    """
+    Centralized Capability Registry.
+    Unifies all first-class subsystems and exposes them dynamically.
+    """
+    def list_providers(self) -> List[str]:
+        from shadow.providers.manager import provider_manager
+        return provider_manager.list_registered_providers()
+
+    def list_mcp_servers(self) -> List[Dict[str, Any]]:
+        from shadow.core.mcp_manager import mcp_manager
+        return mcp_manager.get_db_servers()
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        from shadow.tools.engine import unified_tool_engine
+        tools = unified_tool_engine.list_tools()
+        return [{
+            "name": t.name,
+            "description": t.description,
+            "safety_level": t.safety_level,
+            "source": "mcp" if "." in t.name else "native"
+        } for t in tools]
+
+    def list_sandboxes(self) -> List[str]:
+        # Supported sandbox computer execution types
+        return ["generic", "python", "node", "android"]
+
+    def list_memory_engines(self) -> List[str]:
+        return ["sqlite_long_term", "semantic_keyword", "conversational_cache"]
+
+    def list_plugins(self) -> List[str]:
+        return ["headless_browser", "visual_diff_engine", "android_gradle_compiler"]
+
+
 # Global extensible plugin registry singleton
 plugin_registry = SandboxPluginRegistry()
+
+# Global Capability Registry Singleton
+capability_registry = CapabilityRegistry()

@@ -2,6 +2,7 @@ import json
 from typing import Dict, Any, List, Optional
 from shadow.core.database import get_db_connection
 from shadow.tools.registry import tool_registry
+from shadow.tools.engine import unified_tool_engine
 from shadow.core.logging import log_decision, logger
 
 class ExecutionEngine:
@@ -68,16 +69,34 @@ class ExecutionEngine:
         conn.commit()
         conn.close()
 
-        # Execute task (e.g. resolve matching tool or use fallback agent solver)
-        tool_name = "web_search" if "search" in task_dict["title"].lower() else "read_file"
-        tool = tool_registry.get_tool(tool_name)
+        # Resolve best tool dynamically via Unified Tool Engine (exposes native & MCP tools)
+        tool_name = unified_tool_engine.resolve_best_tool(
+            task_dict["title"], task_dict.get("description") or ""
+        )
+        tool = unified_tool_engine.get_tool(tool_name)
 
         if not tool:
             # Fallback
             result_payload = {"success": True, "result": f"Simulated execution solver completed: {task_dict['title']}"}
         else:
             # Run the tool safely
-            if tool_name == "web_search":
+            if "." in tool_name:
+                # This is an MCP Tool, execute with dynamic payload mapping
+                log_decision(
+                    level="INFO",
+                    action=f"Executing MCP Tool: {tool_name}",
+                    reasoning=f"Resolved dynamically for task: {task_dict['title']}"
+                )
+                args = {}
+                if "query" in task_dict["title"].lower() or "search" in task_dict["title"].lower():
+                    args = {"query": task_dict.get("description") or task_dict["title"]}
+                elif "filepath" in task_dict["title"].lower() or "file" in task_dict["title"].lower():
+                    args = {"filepath": "mission.md"}
+                else:
+                    args = {"message": task_dict.get("description") or task_dict["title"]}
+
+                result_payload = await tool.execute(**args)
+            elif tool_name == "web_search":
                 result_payload = await tool.execute(query=task_dict["description"] or task_dict["title"])
             else:
                 # Mock file path

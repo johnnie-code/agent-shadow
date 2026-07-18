@@ -84,6 +84,20 @@ class GeminiProvider(BaseProvider):
         # Load local cached models
         self.discovered_models = self._load_cache()
 
+    def initialize(self) -> None:
+        pass
+
+    async def health_check(self) -> bool:
+        if not self.api_key:
+            return False
+        try:
+            url = f"{self.api_base}/models?key={self.api_key}"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=5.0)
+                return resp.status_code == 200
+        except Exception:
+            return False
+
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         # gemini-2.5-flash standard pricing: $0.075 / 1M input, $0.30 / 1M output tokens
         return (prompt_tokens * 0.075 / 1_000_000) + (completion_tokens * 0.30 / 1_000_000)
@@ -336,3 +350,29 @@ class GeminiProvider(BaseProvider):
             from shadow.providers.mock import MockProvider
             mock = MockProvider()
             return await mock.chat(messages, **kwargs)
+
+    async def stream_chat(self, messages: List[Dict[str, str]], **kwargs):
+        # Fallback to standard chat and yield content
+        res = await self.chat(messages, **kwargs)
+        yield res["content"]
+
+    def list_models(self) -> List[str]:
+        return list(self.discovered_models.keys()) if self.discovered_models else list(STATIC_FALLBACK_MODELS.keys())
+
+    def supports_tools(self) -> bool:
+        return True
+
+    def supports_streaming(self) -> bool:
+        return False
+
+    def supports_images(self) -> bool:
+        return True
+
+    def supports_reasoning(self) -> bool:
+        return False
+
+    def supports_mcp(self) -> bool:
+        return True
+
+    def shutdown(self) -> None:
+        pass
