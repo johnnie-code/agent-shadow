@@ -15,8 +15,27 @@ class MCPManager:
         self._active_sessions: Dict[str, ClientSession] = {}
         self._session_ctxs: Dict[str, Any] = {} # Storing async exit stacks or contexts
         self._reconnect_tasks: Dict[str, asyncio.Task] = {}
+        self._auto_register_firecrawl()
+
+    def _auto_register_firecrawl(self):
+        try:
+            # Safely register Firecrawl MCP server with default configurations
+            api_key = os.environ.get("FIRECRAWL_API_KEY") or ""
+            self.install_server(
+                name="firecrawl",
+                transport="stdio",
+                command="npx",
+                args=["-y", "firecrawl-mcp"],
+                env={"FIRECRAWL_API_KEY": api_key},
+                description="Firecrawl MCP server for advanced Web Intelligence capabilities.",
+                version="2.1.0"
+            )
+        except Exception:
+            # Safely absorb errors in case tables are not yet created
+            pass
 
     def get_db_servers(self, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+        self._auto_register_firecrawl()
         conn = get_db_connection()
         cursor = conn.cursor()
         if workspace:
@@ -28,6 +47,8 @@ class MCPManager:
         return [dict(row) for row in rows]
 
     def get_db_server(self, name: str) -> Optional[Dict[str, Any]]:
+        if name == "firecrawl":
+            self._auto_register_firecrawl()
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM mcp_servers WHERE name = ?", (name,))

@@ -97,7 +97,7 @@ class CapabilityScanner:
             return self._cache
 
         # Run all discovery routines concurrently
-        providers, mcp, tools, sandbox, memory, bg_services, apis, plugins = await asyncio.gather(
+        providers, mcp, tools, sandbox, memory, bg_services, apis, plugins, web_intel = await asyncio.gather(
             self.discover_ai_providers(),
             self.discover_mcp(),
             self.discover_native_tools(),
@@ -105,7 +105,8 @@ class CapabilityScanner:
             self.discover_memory(),
             self.discover_background_services(),
             self.discover_apis(),
-            self.discover_plugins()
+            self.discover_plugins(),
+            self.discover_web_intelligence()
         )
 
         # Merge custom registered capabilities
@@ -118,6 +119,9 @@ class CapabilityScanner:
                 plugins.append(cap)
             elif cap.category == "API Integration":
                 apis.append(cap)
+
+        # Append web intelligence providers to plugins for standard capability list visibility
+        plugins.extend(web_intel)
 
         # Compute overall health score
         health_report = self._calculate_overall_health(providers, mcp, sandbox, memory, bg_services)
@@ -133,13 +137,69 @@ class CapabilityScanner:
                 "memory": memory,
                 "background_services": bg_services,
                 "apis": apis,
-                "plugins": plugins
+                "plugins": plugins,
+                "web_intelligence": web_intel
             }
         }
 
         self._cache = report
         self._last_refresh = now
         return report
+
+    async def discover_web_intelligence(self) -> List[Capability]:
+        """Inspects the Web Intelligence subsystem, active providers, caching, and indexed content."""
+        from shadow.core.web.manager import web_provider_manager
+        from shadow.core.web.cache import global_web_cache
+
+        capabilities = []
+        providers = web_provider_manager.list_providers()
+
+        # Database web insights count
+        indexed_chunks_count = 0
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM memory WHERE tags LIKE '%web_intelligence%'")
+            indexed_chunks_count = cursor.fetchone()[0]
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+        cache_stats = global_web_cache.get_stats()
+
+        for p in providers:
+            is_avail = await p.is_available()
+            status = "healthy" if is_avail else "offline"
+
+            # Endpoints and capabilities for each provider
+            caps = ["Scrape", "Crawl"]
+            if p.name == "Firecrawl":
+                caps = ["Search", "Scrape", "Crawl", "Map", "Extract", "Interact", "Monitor", "Research Index", "Parse", "Ask", "Docs Search"]
+            elif p.name == "Playwright":
+                caps = ["Scrape", "Interact"]
+
+            auth_configured = True
+            if p.name == "Firecrawl":
+                auth_configured = bool(os.environ.get("FIRECRAWL_API_KEY"))
+
+            capabilities.append(Capability(
+                name=f"{p.name} Web Intelligence Provider",
+                category="API Integration",
+                health=status,
+                enabled=is_avail,
+                version=p.version,
+                capabilities=caps,
+                details={
+                    "provider_id": p.name.lower(),
+                    "configured": is_avail,
+                    "authenticated": auth_configured,
+                    "latency_ms": 0.0,
+                    "cache_size": cache_stats["cache_size"],
+                    "indexed_size_chunks": indexed_chunks_count
+                }
+            ))
+        return capabilities
 
     async def discover_ai_providers(self) -> List[Capability]:
         """Inspects all configured and registered AI Providers."""

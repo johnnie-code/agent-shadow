@@ -2372,5 +2372,383 @@ def config(
 
     console.print(f"[green]✔ Successfully updated '{key}' to '{value}' in your environment configuration.[/green]")
 
+# ==========================================
+# WEB INTELLIGENCE SUBSYSTEM CLI SUBCOMMANDS
+# ==========================================
+
+web_app = typer.Typer(name="web", help="Manage and execute advanced Web Intelligence tasks.")
+app.add_typer(web_app, name="web")
+
+@web_app.command("scrape")
+def web_scrape(
+    url: str = typer.Argument(..., help="The URL to scrape"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Specific provider to use"),
+    index: bool = typer.Option(True, "--index", "-i", help="Index scraped content into Shadow memory")
+):
+    """Scrape clean content from a single webpage."""
+    from shadow.core.web.scraper import Scraper
+    from shadow.core.web.knowledge import KnowledgeIndexer
+
+    console.print(f"[cyan]Scraping page: {url}...[/cyan]")
+    scraper = Scraper()
+    res = asyncio.run(scraper.scrape_page(url, provider_name=provider))
+
+    if not res.get("success"):
+        console.print(f"[red]Failed to scrape page: {res.get('error')}[/red]")
+        return
+
+    content = res.get("content", "")
+    metadata = res.get("metadata") or {}
+    title = metadata.get("title") or "Scraped Page"
+
+    console.print(f"[green]✓ Page scraped successfully ({res.get('provider')})[/green]")
+    console.print(f"[bold]Title:[/bold] {title}")
+    console.print(f"[bold]Content Preview:[/bold]\n{content[:500]}...\n")
+
+    if index and content:
+        console.print("[cyan]Indexing content into Shadow Memory...[/cyan]")
+        indexer = KnowledgeIndexer()
+        index_res = asyncio.run(indexer.index_web_context(url, content, title=title))
+        console.print(f"[green]✓ Indexed {index_res.get('new_chunks_indexed')} chunks into memory.[/green]")
+
+
+@web_app.command("crawl")
+def web_crawl(
+    url: str = typer.Argument(..., help="The starting URL to crawl recursively"),
+    depth: int = typer.Option(3, "--depth", "-d", help="Max depth limit for recursion"),
+    max_pages: int = typer.Option(50, "--max-pages", "-m", help="Max pages limit"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Optional path to export scraped files (json/csv/md/html/sqlite/pdf)")
+):
+    """Crawl a website recursively."""
+    from shadow.core.web.crawler import Crawler
+    from shadow.core.web.knowledge import KnowledgeIndexer
+    from shadow.core.web.exporter import WebDataExporter
+
+    console.print(f"[cyan]Starting crawl on: {url} (Depth: {depth}, Max pages: {max_pages})...[/cyan]")
+    crawler = Crawler(depth_limit=depth, max_pages=max_pages)
+    res = asyncio.run(crawler.crawl(url))
+
+    pages = res.get("data", [])
+    console.print(f"[green]✓ Completed crawl. Successfully scraped {len(pages)} pages.[/green]")
+
+    # Auto-index crawled results
+    indexer = KnowledgeIndexer()
+    new_chunks_total = 0
+    for page in pages:
+        index_res = asyncio.run(indexer.index_web_context(page["url"], page["content"], title=page.get("metadata", {}).get("title", "")))
+        new_chunks_total += index_res.get("new_chunks_indexed", 0)
+    console.print(f"[green]✓ Indexed {new_chunks_total} new chunks into Shadow Memory.[/green]")
+
+    # Optional export
+    if output and pages:
+        ext = os.path.splitext(output)[1].lower()
+        success = False
+        if ext == ".md":
+            success = WebDataExporter.export_markdown(pages, output)
+        elif ext == ".json":
+            success = WebDataExporter.export_json(pages, output)
+        elif ext == ".csv":
+            success = WebDataExporter.export_csv(pages, output)
+        elif ext in (".db", ".sqlite"):
+            success = WebDataExporter.export_sqlite(pages, output)
+        elif ext == ".html":
+            success = WebDataExporter.export_html(pages, output)
+        elif ext == ".pdf":
+            success = WebDataExporter.export_pdf(pages, output)
+
+        if success:
+            console.print(f"[green]✓ Data exported successfully to: {output}[/green]")
+        else:
+            console.print(f"[red]Failed to export data to: {output}[/red]")
+
+
+@web_app.command("search")
+def web_search(
+    query: str = typer.Argument(..., help="Search term/query to discover web resources"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Specific provider to use")
+):
+    """Search the web for query matching pages."""
+    from shadow.core.web.search import global_search_engine
+    console.print(f"[cyan]Searching the web for: '{query}'...[/cyan]")
+    res = asyncio.run(global_search_engine.search(query, provider_name=provider))
+
+    data = res.get("data", [])
+    if not data:
+        console.print("[yellow]No search results found.[/yellow]")
+        return
+
+    table = Table(title=f"Web Search Results for: '{query}'")
+    table.add_column("Title", style="bold green")
+    table.add_column("URL", style="blue")
+    table.add_column("Content Snippet", style="dim")
+
+    for item in data:
+        meta = item.get("metadata") or {}
+        title = meta.get("title") or "Page"
+        table.add_row(title, item.get("url"), item.get("markdown", "")[:100] + "...")
+
+    console.print(table)
+
+
+@web_app.command("map")
+def web_map(
+    url: str = typer.Argument(..., help="The URL to construct a sitemap map of")
+):
+    """Generate a sitemap or list of links from a website."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("map")
+    console.print(f"[cyan]Generating site map for {url} using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.map_site(url))
+
+    links = res.get("links", [])
+    if links:
+        console.print(f"[green]✓ Map completed. Discovered {len(links)} URLs:[/green]")
+        for link in links[:15]:
+            console.print(f"  • {link}")
+        if len(links) > 15:
+            console.print(f"  • ...and {len(links) - 15} more URLs.")
+    else:
+        console.print("[yellow]No URLs mapped or sitemaps found.[/yellow]")
+
+
+@web_app.command("extract")
+def web_extract(
+    url: str = typer.Argument(..., help="The URL to extract structure from"),
+    schema_file: str = typer.Argument(..., help="Path to JSON file containing the schema definition")
+):
+    """Extract schema-based structured JSON data from a page."""
+    from shadow.core.web.manager import web_provider_manager
+    import json
+
+    if not os.path.exists(schema_file):
+        console.print(f"[red]Error: Schema file '{schema_file}' not found.[/red]")
+        return
+
+    try:
+        with open(schema_file, "r") as f:
+            schema = json.load(f)
+    except Exception as e:
+        console.print(f"[red]Failed to parse schema JSON: {e}[/red]")
+        return
+
+    provider = web_provider_manager.determine_best_provider("structured extraction")
+    console.print(f"[cyan]Extracting structured data from {url} using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.extract(url, schema))
+
+    if res.get("success"):
+        console.print("[green]✓ Structured extraction succeeded:[/green]")
+        console.print(json.dumps(res.get("data"), indent=2))
+    else:
+        console.print(f"[red]Extraction failed: {res.get('error')}[/red]")
+
+
+@web_app.command("monitor")
+def web_monitor(
+    url: str = typer.Argument(..., help="The URL to monitor"),
+    schedule: str = typer.Option("every 30 minutes", "--schedule", "-s", help="Natural language schedule / cron"),
+    goal: str = typer.Option("Check for any page updates or layout changes", "--goal", "-g", help="AI judge goal")
+):
+    """Set up recurring checks to watch a page for changes."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("monitor")
+    console.print(f"[cyan]Configuring monitor for {url} on schedule: '{schedule}' using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.monitor(url, schedule, goal))
+
+    if res.get("success"):
+        console.print(f"[green]✓ Monitor successfully created! Monitor ID: {res.get('monitorId')}[/green]")
+    else:
+        console.print(f"[red]Failed to create monitor: {res.get('error')}[/red]")
+
+
+@web_app.command("parse")
+def web_parse(
+    filepath: str = typer.Argument(..., help="Path to local PDF, DOCX or document file to parse")
+):
+    """Parse local document files (PDF, DOCX, DOC, XLSX, HTML, etc.) into clean Markdown."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("parse document")
+    console.print(f"[cyan]Parsing document {filepath} using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.parse_document(filepath))
+
+    if res.get("success"):
+        console.print("[green]✓ Document parsed successfully![/green]")
+        if "summary" in res:
+            console.print(f"[bold]Summary:[/bold] {res.get('summary')}\n")
+        console.print(f"[bold]Content Preview:[/bold]\n{res.get('markdown') or res.get('content') or ''}")
+    else:
+        console.print(f"[red]Document parse failed: {res.get('error')}[/red]")
+
+
+@web_app.command("research")
+def web_research(
+    query: str = typer.Argument(..., help="Research query for scientific papers and GitHub history")
+):
+    """Search scientific and engineering research indices."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("scientific papers")
+    console.print(f"[cyan]Executing engineering and scientific research for: '{query}' using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.research_index(query))
+
+    papers = res.get("papers", [])
+    github = res.get("github", [])
+
+    if papers:
+        console.print("\n[bold green]=== Matching Scientific Papers ===[/bold green]")
+        for p in papers:
+            console.print(f"• [bold]{p.get('title')}[/bold] by {', '.join(p.get('authors', [])) or 'N/A'}")
+            console.print(f"  Citation: {p.get('citation')}")
+
+    if github:
+        console.print("\n[bold cyan]=== Matching GitHub History & Issues ===[/bold cyan]")
+        for g in github:
+            console.print(f"• Repo: {g.get('repo')} | Issue/PR: {g.get('issue') or g.get('title') or 'N/A'}")
+
+
+@web_app.command("ask")
+def web_ask(
+    question: str = typer.Argument(..., help="Troubleshooting question"),
+    job_id: Optional[str] = typer.Option(None, "--job-id", "-j", help="Failing job ID")
+):
+    """Diagnose a failing web task or troubleshooting query from account support logs."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("ask questions")
+    console.print(f"[cyan]Troubleshooting using {provider.name}...[/cyan]")
+    res = asyncio.run(provider.ask_support(question, job_id))
+
+    if res.get("success"):
+        console.print(f"\n[green]✓ Support Diagnosis Answer:[/green]\n{res.get('answer')}")
+    else:
+        console.print(f"[red]Ask Support failed: {res.get('error')}[/red]")
+
+
+@web_app.command("docs")
+def web_docs(
+    question: str = typer.Argument(..., help="Setup or usage question grounded in official documentation")
+):
+    """Search the official provider docs with citations."""
+    from shadow.core.web.manager import web_provider_manager
+    provider = web_provider_manager.determine_best_provider("docs search")
+    console.print(f"[cyan]Searching documentation via {provider.name}...[/cyan]")
+    res = asyncio.run(provider.docs_search(question))
+
+    if res.get("success"):
+        console.print(f"\n[green]✓ Answer:[/green]\n{res.get('answer')}")
+        citations = res.get("citations", [])
+        if citations:
+            console.print("\n[bold]Citations:[/bold]")
+            for c in citations:
+                console.print(f"  • {c}")
+    else:
+        console.print(f"[red]Docs search failed: {res.get('error')}[/red]")
+
+
+@web_app.command("providers")
+def web_providers():
+    """List configured and active Web Intelligence providers."""
+    from shadow.core.capabilities import capability_scanner
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    providers_list = scan["sectors"].get("web_intelligence", [])
+
+    table = Table(title="Web Intelligence Providers Status")
+    table.add_column("Provider Name", style="bold magenta")
+    table.add_column("Status / Configured", style="bold")
+    table.add_column("Authentication Set", style="cyan")
+    table.add_column("Capabilities", style="green")
+
+    for p in providers_list:
+        pname = p.name.replace(" Web Intelligence Provider", "")
+        status = "[green]Ready[/green]" if p.enabled else "[dim]Offline / Degraded[/dim]"
+        auth = "✓ Verified (Key set)" if p.details.get("authenticated") else "Keyless / Fallback"
+        table.add_row(pname, status, auth, ", ".join(p.capabilities))
+
+    console.print(table)
+
+
+@web_app.command("health")
+def web_health():
+    """Display comprehensive Web Intelligence diagnostic report and cache metrics."""
+    from shadow.core.web.cache import global_web_cache
+    from shadow.core.capabilities import capability_scanner
+
+    scan = asyncio.run(capability_scanner.scan_all(force=True))
+    providers_list = scan["sectors"].get("web_intelligence", [])
+    cache_stats = global_web_cache.get_stats()
+
+    console.print("\n[bold cyan]=== Web Intelligence Health Diagnostics ===[/bold cyan]\n")
+
+    for p in providers_list:
+        pname = p.name.replace(" Web Intelligence Provider", "")
+        status_color = "green" if p.enabled else "yellow"
+        console.print(f"• [bold]{pname}[/bold]: [{status_color}]{p.health.upper()}[/{status_color}] | Version: {p.version}")
+        console.print(f"  Auth status: {'Authenticated' if p.details.get('authenticated') else 'Keyless fallback tier'}")
+        console.print(f"  End points: {', '.join(p.capabilities)}\n")
+
+    console.print("[bold]Cache Usage Statistics:[/bold]")
+    console.print(f"  • Cached URLs:      {cache_stats['cache_size']}")
+    console.print(f"  • Active entries:     {cache_stats['active_entries']}")
+    console.print(f"  • Expired entries:    {cache_stats['expired_entries']}\n")
+
+
+@web_app.command("cache")
+def web_cache(
+    action: str = typer.Argument("stats", help="Cache operation: stats, clear")
+):
+    """View metrics or clear crawled/scraped caching layers."""
+    from shadow.core.web.cache import global_web_cache
+    if action == "clear":
+        global_web_cache.clear()
+        console.print("[green]✓ Caching layer cleared completely.[/green]")
+    else:
+        stats = global_web_cache.get_stats()
+        console.print(f"[bold]Cache size:[/bold] {stats['cache_size']} entries")
+        console.print(f"[bold]Active URLs:[/bold] {stats['active_entries']} (valid TTL)")
+
+
+@web_app.command("status")
+def web_status():
+    """Query current Web Intelligence configurations, cache load and queues."""
+    web_health()
+
+
+# --- Top-level Web short-hand commands ---
+
+@app.command("crawl")
+def app_crawl(
+    url: str = typer.Argument(..., help="The starting URL to crawl recursively"),
+    depth: int = typer.Option(3, "--depth", "-d", help="Max depth limit for recursion"),
+    max_pages: int = typer.Option(50, "--max-pages", "-m", help="Max pages limit"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Optional path to export scraped files")
+):
+    """Crawl a website recursively (Short-hand for 'shadow web crawl')."""
+    web_crawl(url=url, depth=depth, max_pages=max_pages, output=output)
+
+
+@app.command("scrape")
+def app_scrape(
+    url: str = typer.Argument(..., help="The URL to scrape"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Specific provider to use")
+):
+    """Scrape clean content from a single webpage (Short-hand for 'shadow web scrape')."""
+    web_scrape(url=url, provider=provider)
+
+
+@app.command("search")
+def app_search_web(
+    query: str = typer.Argument(..., help="Search term/query to discover web resources"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Specific provider to use")
+):
+    """Search the web for query matching pages (Short-hand for 'shadow web search')."""
+    web_search(query=query, provider=provider)
+
+
+@app.command("extract")
+def app_extract(
+    url: str = typer.Argument(..., help="The URL to extract structure from"),
+    schema_file: str = typer.Argument(..., help="Path to JSON file containing the schema definition")
+):
+    """Extract schema-based structured JSON data from a page (Short-hand for 'shadow web extract')."""
+    web_extract(url=url, schema_file=schema_file)
+
+
 if __name__ == "__main__":
     app()
