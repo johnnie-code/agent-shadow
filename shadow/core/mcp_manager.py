@@ -2,9 +2,20 @@ import os
 import json
 import asyncio
 from typing import Dict, List, Any, Optional
-from mcp import ClientSession, StdioServerParameters, types
-from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
+
+try:
+    from mcp import ClientSession, StdioServerParameters, types
+    from mcp.client.stdio import stdio_client
+    from mcp.client.sse import sse_client
+    mcp_available = True
+except ImportError:
+    mcp_available = False
+    ClientSession = Any
+    StdioServerParameters = Any
+    types = None
+    stdio_client = None
+    sse_client = None
+
 from shadow.core.database import get_db_connection
 from shadow.core.logging import log_decision, logger
 from shadow.core.events import event_bus
@@ -18,6 +29,8 @@ class MCPManager:
         self._auto_register_firecrawl()
 
     def _auto_register_firecrawl(self):
+        if not mcp_available:
+            return
         try:
             # Safely register Firecrawl MCP server with default configurations
             api_key = os.environ.get("FIRECRAWL_API_KEY") or ""
@@ -35,7 +48,8 @@ class MCPManager:
             pass
 
     def get_db_servers(self, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
-        self._auto_register_firecrawl()
+        if mcp_available:
+            self._auto_register_firecrawl()
         conn = get_db_connection()
         cursor = conn.cursor()
         if workspace:
@@ -47,7 +61,7 @@ class MCPManager:
         return [dict(row) for row in rows]
 
     def get_db_server(self, name: str) -> Optional[Dict[str, Any]]:
-        if name == "firecrawl":
+        if name == "firecrawl" and mcp_available:
             self._auto_register_firecrawl()
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -149,6 +163,10 @@ class MCPManager:
         """
         Start/connect to the MCP server based on its transport configuration.
         """
+        if not mcp_available:
+            logger.error(f"Cannot start MCP server '{name}': mcp package is not installed.")
+            return False
+
         server = self.get_db_server(name)
         if not server:
             logger.error(f"MCP server '{name}' not found.")
@@ -267,6 +285,9 @@ class MCPManager:
 
     async def stop_server(self, name: str) -> bool:
         """Stop/disconnect from the MCP server."""
+        if not mcp_available:
+            return True
+
         self._update_status(name, "stopped")
         if name in self._reconnect_tasks:
             self._reconnect_tasks[name].cancel()
@@ -297,6 +318,9 @@ class MCPManager:
 
     async def health_check_server(self, name: str) -> bool:
         """Query server health using ping or capability checks."""
+        if not mcp_available:
+            return False
+
         session = self._active_sessions.get(name)
         if not session:
             # Attempt to start if offline
@@ -395,6 +419,9 @@ class MCPManager:
         """
         Connects on demand, executes MCP tool on specified server, handling permissions.
         """
+        if not mcp_available:
+            return {"success": False, "error": "Model Context Protocol is unavailable (mcp package is not installed)."}
+
         # Ensure server is active
         session = self._active_sessions.get(server_name)
         if not session:

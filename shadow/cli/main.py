@@ -13,15 +13,6 @@ from rich.table import Table
 from rich.panel import Panel
 from shadow.core.config import get_config, SHADOW_HOME
 from shadow.core.database import init_db, get_db_connection
-from shadow.goals.engine import goals_engine
-from shadow.goals.scanner import OpportunityScanner
-from shadow.goals.generator import TaskGenerator
-from shadow.goals.priority import priority_engine
-from shadow.goals.executor import execution_engine
-from shadow.goals.reflection import reflection_engine
-from shadow.memory.memory import memory_engine
-from shadow.tools.registry import tool_registry
-from shadow.skills.skills import skills_registry
 
 app = typer.Typer(name="shadow", help="PROJECT SHADOW — Autonomous OS Control Terminal CLI")
 daemon_app = typer.Typer(name="daemon", help="Manage the Shadow OS background daemon service.")
@@ -33,8 +24,117 @@ app.add_typer(sandbox_app, name="sandbox")
 memory_app = typer.Typer(name="memory", help="Manage persistent memories.")
 app.add_typer(memory_app, name="memory")
 
-from shadow.cli.mcp import mcp_app
+mcp_app = typer.Typer(name="mcp", help="Manage external Model Context Protocol (MCP) servers.")
 app.add_typer(mcp_app, name="mcp")
+
+@mcp_app.callback(invoke_without_command=True)
+def mcp_callback(ctx: typer.Context):
+    """
+    Model Context Protocol (MCP) Management interface.
+    """
+    from shadow.cli.mcp import mcp_callback as delegate_callback
+    delegate_callback(ctx)
+
+@mcp_app.command("install")
+def mcp_install(
+    name: str = typer.Argument(..., help="Unique name for the MCP server"),
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol: 'stdio' or 'sse'"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="URL for SSE connections"),
+    command: Optional[str] = typer.Option(None, "--cmd", "-c", help="Command to run stdio subprocess (e.g. 'uv', 'node', 'python')"),
+    args: Optional[str] = typer.Option(None, "--args", "-a", help="Comma-separated arguments for stdio subprocess"),
+    env: Optional[str] = typer.Option(None, "--env", "-e", help="JSON string representing environment variables"),
+    auth: Optional[str] = typer.Option(None, "--auth", help="JSON string representing auth configuration (headers/keys)"),
+    workspace: str = typer.Option("global", "--workspace", "-w", help="Workspace assignment scoping"),
+    description: Optional[str] = typer.Option(None, "--desc", "-d", help="Human-readable server description"),
+    version: Optional[str] = typer.Option(None, "--version", "-v", help="Server version")
+):
+    """
+    Install and register an MCP server registry entry.
+    """
+    from shadow.cli.mcp import mcp_install as delegate_install
+    delegate_install(name, transport, url, command, args, env, auth, workspace, description, version)
+
+@mcp_app.command("list")
+def mcp_list(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Filter by workspace scoping")
+):
+    """
+    List all registered MCP servers, transport types, and connection status.
+    """
+    from shadow.cli.mcp import mcp_list as delegate_list
+    delegate_list(workspace)
+
+@mcp_app.command("info")
+def mcp_info(name: str = typer.Argument(..., help="Name of the MCP server")):
+    """
+    Show comprehensive configuration and discovered capabilities for a specific server.
+    """
+    from shadow.cli.mcp import mcp_info as delegate_info
+    delegate_info(name)
+
+@mcp_app.command("enable")
+def mcp_enable(name: str = typer.Argument(..., help="Name of the MCP server")):
+    """
+    Enable a registered MCP server.
+    """
+    from shadow.cli.mcp import mcp_enable as delegate_enable
+    delegate_enable(name)
+
+@mcp_app.command("disable")
+def mcp_disable(name: str = typer.Argument(..., help="Name of the MCP server")):
+    """
+    Disable and disconnect a registered MCP server.
+    """
+    from shadow.cli.mcp import mcp_disable as delegate_disable
+    delegate_disable(name)
+
+@mcp_app.command("remove")
+def mcp_remove(name: str = typer.Argument(..., help="Name of the MCP server to uninstall")):
+    """
+    Completely remove an MCP server from the registry.
+    """
+    from shadow.cli.mcp import mcp_remove as delegate_remove
+    delegate_remove(name)
+
+@mcp_app.command("health")
+def mcp_health(name: str = typer.Argument(..., help="Name of the MCP server")):
+    """
+    Trigger health checks and verify connectivity to the server.
+    """
+    from shadow.cli.mcp import mcp_health as delegate_health
+    delegate_health(name)
+
+@mcp_app.command("logs")
+def mcp_logs(name: str = typer.Argument(..., help="Name of the MCP server")):
+    """
+    Retrieve connection logs and execution traces for a server.
+    """
+    from shadow.cli.mcp import mcp_logs as delegate_logs
+    delegate_logs(name)
+
+@mcp_app.command("tools")
+def mcp_tools(name: Optional[str] = typer.Option(None, "--server", "-s", help="Server name")):
+    """
+    List automatically discovered tools.
+    """
+    from shadow.cli.mcp import mcp_tools as delegate_tools
+    delegate_tools(name)
+
+@mcp_app.command("resources")
+def mcp_resources(name: Optional[str] = typer.Option(None, "--server", "-s", help="Server name")):
+    """
+    List automatically discovered resources.
+    """
+    from shadow.cli.mcp import mcp_resources as delegate_resources
+    delegate_resources(name)
+
+@mcp_app.command("prompts")
+def mcp_prompts(name: Optional[str] = typer.Option(None, "--server", "-s", help="Server name")):
+    """
+    List automatically discovered prompts.
+    """
+    from shadow.cli.mcp import mcp_prompts as delegate_prompts
+    delegate_prompts(name)
 
 console = Console()
 
@@ -343,6 +443,7 @@ def sandbox_resume(
 def is_onboarding_completed() -> bool:
     try:
         init_db()
+        from shadow.memory.memory import memory_engine
         mem = memory_engine.get_memory_by_key("onboarding_completed")
         if mem and mem.get("content") == "true":
             return True
@@ -877,6 +978,7 @@ def mission():
     """
     Parse and synchronize the mission.md file to local structured goals database.
     """
+    from shadow.goals.engine import goals_engine
     mission_path = os.path.join(SHADOW_HOME, "mission.md")
     if not os.path.exists(mission_path):
         console.print(f"[red]mission.md file not found at {mission_path}. Create one first.[/red]")
@@ -894,6 +996,7 @@ def goals():
     """
     List active structured goals tracked by Shadow OS.
     """
+    from shadow.goals.engine import goals_engine
     active = goals_engine.get_active_goals()
     if not active:
         console.print("[yellow]No active goals found in the system. Run 'shadow mission' to parse.[/yellow]")
@@ -916,6 +1019,7 @@ def tasks():
     """
     List and prioritize queued execution tasks.
     """
+    from shadow.goals.priority import priority_engine
     priority_engine.reprioritize_all_tasks()
 
     conn = get_db_connection()
@@ -950,6 +1054,7 @@ def execute(
     if query_or_id.isdigit():
         task_id = int(query_or_id)
         console.print(f"[yellow]Triggering execution for Task #{task_id}...[/yellow]")
+        from shadow.goals.executor import execution_engine
         res = asyncio.run(execution_engine.execute_task(task_id))
         if res.get("success"):
             console.print(f"[green]Task #{task_id} completed successfully![/green]")
@@ -980,6 +1085,7 @@ def approvals():
         console.print("[green]No pending approvals in queue.[/green]")
         return
 
+    from shadow.goals.executor import execution_engine
     for app_req in pending:
         console.print(f"\n[bold yellow]--- Pending Approval Request #{app_req['id']} ---[/bold yellow]")
         console.print(f"Task ID: {app_req['task_id']}")
@@ -1001,6 +1107,7 @@ def search(query: str):
     """
     Search the Shadow OS long-term sqlite memories and insights index.
     """
+    from shadow.memory.memory import memory_engine
     res = memory_engine.search_memories(query)
     if not res:
         console.print(f"[yellow]No matching memories found for search query: '{query}'[/yellow]")
@@ -1048,6 +1155,7 @@ def memory_save(
     workspace: str = typer.Option("global", "--workspace", "-w", help="Optional workspace scoping")
 ):
     """Save a persistent memory block."""
+    from shadow.memory.memory import memory_engine
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     mem_id = memory_engine.save_memory(
         category=category,
@@ -1067,6 +1175,7 @@ def memory_search(
     limit: int = typer.Option(20, "--limit", "-l", help="Max number of records to return")
 ):
     """Search workspace or global persistent memories."""
+    from shadow.memory.memory import memory_engine
     res = memory_engine.search_memory(query, workspace=workspace, limit=limit)
     if not res:
         console.print(f"[yellow]No matching memories found for query: '{query}'[/yellow]")
@@ -1109,6 +1218,7 @@ def memory_update(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="New workspace")
 ):
     """Update an existing persistent memory by ID."""
+    from shadow.memory.memory import memory_engine
     kwargs = {}
     if category is not None:
         kwargs["category"] = category
@@ -1140,6 +1250,7 @@ def memory_delete(
     memory_id: int = typer.Argument(..., help="The memory ID to delete")
 ):
     """Delete a persistent memory by ID."""
+    from shadow.memory.memory import memory_engine
     confirm = typer.confirm(f"Are you sure you want to permanently delete Memory ID {memory_id}?")
     if confirm:
         success = memory_engine.delete_memory(memory_id)
@@ -1157,6 +1268,7 @@ def memory_summarize(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Filter by workspace")
 ):
     """Generate an automatic summary of matching memories."""
+    from shadow.memory.memory import memory_engine
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     summary_text = memory_engine.summarize_memory(category=category, tags=tag_list, workspace=workspace)
     console.print("\n[bold green]=== MEMORY SUMMARY ===[/bold green]\n")
@@ -1168,6 +1280,7 @@ def opportunities(queries: Optional[str] = None):
     """
     Trigger real-time web scan and parse new matching opportunities.
     """
+    from shadow.goals.scanner import OpportunityScanner
     search_queries = [q.strip() for q in (queries or "Japan scholarships, Remote AI jobs").split(",")]
     console.print(f"[cyan]Scanning the web for: {search_queries}...[/cyan]")
 
@@ -1521,6 +1634,7 @@ def reflect():
     """
     Perform strategic evening reflection audit.
     """
+    from shadow.goals.reflection import reflection_engine
     console.print("[cyan]Compiling daily logs and task list for evening reflection...[/cyan]")
     text = asyncio.run(reflection_engine.perform_daily_reflection())
     console.print("\n[bold green]=== DAILY REFLECTION REPORT ===[/bold green]")
@@ -1843,6 +1957,7 @@ def run_self_update_process():
         if os.path.exists(mission_path):
             with open(mission_path, "r", encoding="utf-8") as f:
                 markdown_text = f.read()
+            from shadow.goals.engine import goals_engine
             goals = goals_engine.parse_mission_markdown(markdown_text)
             goals_engine.sync_goals_to_db(goals)
         logger.log_event("migrations", "Database migration & mission sync completed successfully")
@@ -2064,6 +2179,7 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                 console.print(f"[red][x] Database auto-repair failed: {re}[/red]")
 
     # 5. Mission file and goal sync check
+    from shadow.goals.engine import goals_engine
     mission_path = os.path.join(SHADOW_HOME, "mission.md")
     if not os.path.exists(mission_path):
         console.print(f"[red][x] mission.md file is missing at {mission_path}.[/red]")
@@ -2161,6 +2277,16 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
                 console.print("[green][✓] Registry auto-repaired successfully.[/green]")
             except Exception:
                 pass
+
+    # 7b. MCP Subsystem Check
+    try:
+        from shadow.core.mcp_manager import mcp_available
+        if not mcp_available:
+            console.print("[yellow][!] MCP: Unavailable (package not installed)[/yellow]")
+        else:
+            console.print("[green][✓] MCP Subsystem: Available and verified.[/green]")
+    except Exception as mcpe:
+        console.print(f"[red][x] MCP Subsystem: Error ({mcpe})[/red]")
 
     # 8. Scheduler & Runtime Verification
     try:
@@ -2478,6 +2604,7 @@ def retry():
 
     task_id = row["id"]
     console.print(f"[yellow]Retrying execution for Task #{task_id}: '{row['title']}'...[/yellow]")
+    from shadow.goals.executor import execution_engine
     res = asyncio.run(execution_engine.execute_task(task_id))
     if res.get("success"):
         console.print(f"[green]✓ Task #{task_id} successfully executed on retry![/green]")

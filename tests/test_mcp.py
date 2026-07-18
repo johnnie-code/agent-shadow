@@ -81,3 +81,28 @@ def test_unified_tool_resolution():
 
     tool2 = unified_tool_engine.resolve_best_tool("Read local configs")
     assert tool2 == "read_file"
+
+@pytest.mark.asyncio
+async def test_mcp_unavailable_fallback():
+    # Force mcp_available to False
+    import shadow.core.mcp_manager
+    import shadow.core.capabilities
+    from shadow.core.capabilities import capability_scanner
+
+    orig_mcp_available = shadow.core.mcp_manager.mcp_available
+    try:
+        shadow.core.mcp_manager.mcp_available = False
+
+        # Test execute_tool fails gracefully
+        res = await shadow.core.mcp_manager.mcp_manager.execute_tool("firecrawl", "scrape", {})
+        assert res["success"] is False
+        assert "unavailable" in res["error"].lower() or "not installed" in res["error"].lower()
+
+        # Test capability scanner returns disabled
+        caps = await capability_scanner.discover_mcp()
+        for cap in caps:
+            assert cap.enabled is False
+            assert cap.health == "offline"
+            assert cap.details.get("error") == "mcp package is not installed"
+    finally:
+        shadow.core.mcp_manager.mcp_available = orig_mcp_available

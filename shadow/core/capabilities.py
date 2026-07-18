@@ -280,6 +280,7 @@ class CapabilityScanner:
 
     async def discover_mcp(self) -> List[Capability]:
         """Inspects the Model Context Protocol registry dynamically."""
+        from shadow.core.mcp_manager import mcp_available
         servers = mcp_manager.get_db_servers()
         capabilities = []
 
@@ -311,7 +312,7 @@ class CapabilityScanner:
                 conn.close()
 
             health_status = "healthy" if status == "running" else ("offline" if status == "stopped" else "error")
-            if status == "disabled":
+            if status == "disabled" or not mcp_available:
                 health_status = "offline"
 
             caps = []
@@ -323,11 +324,11 @@ class CapabilityScanner:
                 name=name,
                 category="MCP Server",
                 health=health_status,
-                enabled=(status != "disabled"),
+                enabled=mcp_available and (status != "disabled"),
                 version=s.get("version") or "1.0",
                 capabilities=caps,
                 details={
-                    "status": status,
+                    "status": "disabled" if not mcp_available else status,
                     "transport": transport,
                     "url": s.get("url") or "",
                     "command": s.get("command") or "",
@@ -335,7 +336,8 @@ class CapabilityScanner:
                     "tools_count": len(tools_list),
                     "prompts_count": len(prompts_list),
                     "resources_count": len(resources_list),
-                    "permissions_configured": perms_count
+                    "permissions_configured": perms_count,
+                    "error": "mcp package is not installed" if not mcp_available else None
                 }
             ))
 

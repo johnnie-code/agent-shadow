@@ -1,21 +1,31 @@
 import os
 from typing import List, Dict, Any
-from mcp.server.fastmcp import FastMCP
-from mcp.server.sse import SseServerTransport
+
+try:
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.sse import SseServerTransport
+    mcp_available = True
+except ImportError:
+    mcp_available = False
+    FastMCP = None
+    SseServerTransport = None
+
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from shadow.core.database import get_db_connection
 from shadow.tools.registry import tool_registry
 
-# Create FastMCP server
-mcp_server = FastMCP(
-    "ShadowServer",
-    instructions="Exposes Shadow OS Tools, Goals, Opportunities, and Memories over MCP."
-)
+if mcp_available:
+    # Create FastMCP server
+    mcp_server = FastMCP(
+        "ShadowServer",
+        instructions="Exposes Shadow OS Tools, Goals, Opportunities, and Memories over MCP."
+    )
+else:
+    mcp_server = None
 
 # Define Resources
 
-@mcp_server.resource("shadow://goals")
 def get_shadow_goals() -> str:
     """Retrieve current active goals and projects tracked by Shadow OS."""
     conn = get_db_connection()
@@ -28,7 +38,10 @@ def get_shadow_goals() -> str:
     import json
     return json.dumps(goals, indent=2)
 
-@mcp_server.resource("shadow://opportunities")
+if mcp_server is not None:
+    mcp_server.resource("shadow://goals")(get_shadow_goals)
+
+
 def get_shadow_opportunities() -> str:
     """Retrieve newly discovered opportunities."""
     conn = get_db_connection()
@@ -41,7 +54,10 @@ def get_shadow_opportunities() -> str:
     import json
     return json.dumps(opps, indent=2)
 
-@mcp_server.resource("shadow://memories")
+if mcp_server is not None:
+    mcp_server.resource("shadow://opportunities")(get_shadow_opportunities)
+
+
 def get_shadow_memories() -> str:
     """Retrieve relevant memories."""
     conn = get_db_connection()
@@ -54,9 +70,12 @@ def get_shadow_memories() -> str:
     import json
     return json.dumps(res, indent=2)
 
+if mcp_server is not None:
+    mcp_server.resource("shadow://memories")(get_shadow_memories)
+
+
 # Define Tools
 
-@mcp_server.tool()
 async def read_file(filepath: str) -> str:
     """Reads a file in the workspace or repository root."""
     tool = tool_registry.get_tool("read_file")
@@ -67,7 +86,10 @@ async def read_file(filepath: str) -> str:
         return str(res["result"])
     return f"Error: {res.get('error')}"
 
-@mcp_server.tool()
+if mcp_server is not None:
+    mcp_server.tool()(read_file)
+
+
 async def list_files(path: str = ".") -> str:
     """Lists files under a directory."""
     tool = tool_registry.get_tool("list_files")
@@ -78,7 +100,10 @@ async def list_files(path: str = ".") -> str:
         return str(res["result"])
     return f"Error: {res.get('error')}"
 
-@mcp_server.tool()
+if mcp_server is not None:
+    mcp_server.tool()(list_files)
+
+
 async def web_search(query: str) -> str:
     """Runs a web search using the configured search provider."""
     tool = tool_registry.get_tool("web_search")
@@ -89,9 +114,12 @@ async def web_search(query: str) -> str:
         return str(res["result"])
     return f"Error: {res.get('error')}"
 
+if mcp_server is not None:
+    mcp_server.tool()(web_search)
+
+
 # Define Prompts
 
-@mcp_server.prompt()
 def align_with_goals(instruction: str) -> str:
     """Create a prompt formatted to align the instruction with current active goals."""
     conn = get_db_connection()
@@ -110,9 +138,15 @@ def align_with_goals(instruction: str) -> str:
         f"Please perform the task in alignment with the goals above."
     )
 
+if mcp_server is not None:
+    mcp_server.prompt()(align_with_goals)
+
+
 # FastAPI mount helper
-def create_sse_app(mcp: FastMCP = mcp_server) -> Starlette:
+def create_sse_app(mcp: Any = mcp_server) -> Starlette:
     """Create a Starlette app that handles SSE connections and message handling"""
+    if not mcp_available or mcp is None:
+        raise RuntimeError("Model Context Protocol is unavailable (mcp package is not installed).")
     transport = SseServerTransport("/messages/")
 
     async def handle_sse(request):

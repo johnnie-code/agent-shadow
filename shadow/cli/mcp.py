@@ -15,6 +15,10 @@ def mcp_callback(ctx: typer.Context):
     """
     Model Context Protocol (MCP) Management interface.
     """
+    from shadow.core.mcp_manager import mcp_available
+    if not mcp_available:
+        console.print("[bold red]Error: Model Context Protocol is unavailable (mcp package is not installed).[/bold red]")
+        raise typer.Exit(code=1)
     if ctx.invoked_subcommand is None:
         mcp_list()
 
