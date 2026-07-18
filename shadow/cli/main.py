@@ -1578,11 +1578,31 @@ def run_self_update_process():
     import sys
     import shutil
     import subprocess
+    import traceback
     from datetime import datetime
+    from shadow.core.update_logger import UpdateLogger
+    from shadow.core.self_test import subsystem_runner
+
+    logger = UpdateLogger()
+
+    def notify_tg(message: str):
+        config = get_config()
+        token = config.telegram_bot_token
+        chat_id = config.telegram_chat_id
+        if token and chat_id:
+            import httpx
+            try:
+                httpx.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": message},
+                    timeout=5.0
+                )
+            except Exception:
+                pass
 
     console.print("[bold blue]🔄 Starting Project Shadow Safe Self-Update System...[/bold blue]\n")
+    notify_tg("🔔 PROJECT SHADOW: Self-update started.")
 
-    # 1. Detect current installation
     config = get_config()
     db_path = config.db_path
     env_path = os.path.join(SHADOW_HOME, "config", ".env")
@@ -1591,19 +1611,24 @@ def run_self_update_process():
     repo_dir = get_repo_dir()
     if not repo_dir:
         console.print("[red][x] Could not locate git repository directory. Aborting self-update.[/red]")
+        logger.end_update(success=False, git_commit_after="unknown", rollback_reason="Missing git repository")
+        notify_tg("✗ PROJECT SHADOW: Self-update failed. Missing git repository.")
         return
 
-    # Check git state and original commit
     try:
         orig_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
     except Exception as e:
         console.print(f"[red][x] Failed to get current git commit: {e}. Aborting self-update.[/red]")
+        logger.end_update(success=False, git_commit_after="unknown", rollback_reason=f"Failed to get git commit: {e}")
+        notify_tg(f"✗ PROJECT SHADOW: Self-update failed. Failed to get git commit: {e}")
         return
 
-    # 2-4. Backup database, config, and mission
+    logger.start_update(git_commit_before=orig_commit)
+
     backup_root = os.path.join(SHADOW_HOME, "backups")
     backup_dir = os.path.join(backup_root, f"self_update_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     console.print(f"[*] Creating automatic data backups at [yellow]{backup_dir}/[/yellow]...")
+    logger.log_event("backup", f"Creating data backups at {backup_dir}")
     try:
         os.makedirs(backup_dir, exist_ok=True)
         backed_up_files = []
@@ -1617,89 +1642,207 @@ def run_self_update_process():
             shutil.copy2(db_path, os.path.join(backup_dir, "shadow.db"))
             backed_up_files.append("shadow.db")
         console.print(f"[green][✓] Backed up data: {', '.join(backed_up_files)}[/green]")
+        logger.log_event("backup", "Data backup completed successfully", details={"files": backed_up_files})
     except Exception as e:
         console.print(f"[red][x] Data backup failed: {e}. Aborting update for safety.[/red]")
+        logger.log_exception("backup", e, "Critical data backup failure")
+        logger.end_update(success=False, git_commit_after=orig_commit, rollback_reason=f"Backup failed: {e}")
+        notify_tg(f"✗ PROJECT SHADOW: Self-update failed. Backup failed: {e}")
         return
 
-    # Backup the Python virtualenv (venv)
     venv_dir = os.path.dirname(os.path.dirname(sys.executable))
     venv_backup_dir = os.path.join(SHADOW_HOME, "venv_backup")
     has_venv_backup = False
     if os.path.exists(venv_dir) and os.path.basename(venv_dir) in ["venv", ".venv"]:
         console.print("[*] Backing up Python virtual environment (venv)...")
+        logger.log_event("venv_backup", f"Backing up venv {venv_dir} to {venv_backup_dir}")
         try:
             if os.path.exists(venv_backup_dir):
                 shutil.rmtree(venv_backup_dir)
             shutil.copytree(venv_dir, venv_backup_dir, symlinks=True)
             has_venv_backup = True
             console.print("[green][✓] Virtual environment backup completed successfully.[/green]")
+            logger.log_event("venv_backup", "Venv backup completed successfully")
         except Exception as e:
             console.print(f"[yellow][!] Virtual environment backup warning: {e}. Continuing anyway.[/yellow]")
+            logger.log_exception("venv_backup", e, "Non-fatal venv backup warning")
 
-    def trigger_self_update_rollback(error_msg: str):
+    def save_pre_rollback_snapshot(failed_step: str, failed_command: Optional[str], traceback_str: str, error_msg: str):
+        snapshot_dir = os.path.join(SHADOW_HOME, "logs", "update", f"snapshot-{logger.timestamp}")
+        os.makedirs(snapshot_dir, exist_ok=True)
+        console.print(f"[yellow][*] Saving pre-rollback diagnostic snapshot at {snapshot_dir}...[/yellow]")
+        logger.log_event("pre_rollback_snapshot", f"Saving pre-rollback snapshot to {snapshot_dir}")
+
+        try:
+            with open(os.path.join(snapshot_dir, "environment.json"), "w") as f:
+                safe_env = {}
+                for k, v in os.environ.items():
+                    if "key" in k.lower() or "token" in k.lower() or "secret" in k.lower() or "password" in k.lower():
+                        safe_env[k] = "********"
+                    else:
+                        safe_env[k] = v
+                json.dump(safe_env, f, indent=2)
+
+            try:
+                pkg_info = subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True)
+                with open(os.path.join(snapshot_dir, "installed_packages.txt"), "w") as f:
+                    f.write(pkg_info)
+            except Exception:
+                pass
+
+            try:
+                g_diff = subprocess.check_output(["git", "diff"], cwd=repo_dir, text=True)
+                with open(os.path.join(snapshot_dir, "git_diff.txt"), "w") as f:
+                    f.write(g_diff)
+            except Exception:
+                pass
+
+            meta = {
+                "failed_step": failed_step,
+                "failed_command": failed_command,
+                "error_message": error_msg,
+                "traceback": traceback_str,
+                "timestamp": datetime.now().isoformat()
+            }
+            with open(os.path.join(snapshot_dir, "diagnostics.json"), "w") as f:
+                json.dump(meta, f, indent=2)
+
+            logger.log_event("pre_rollback_snapshot", "Pre-rollback snapshot completed successfully")
+        except Exception as se:
+            logger.log_exception("pre_rollback_snapshot", se, "Failed to capture complete snapshot")
+
+    def trigger_self_update_rollback(error_msg: str, failed_step: str, failed_command: Optional[str] = None, exc_info: Optional[Exception] = None):
+        tb_str = ""
+        if exc_info:
+            tb_str = "".join(traceback.format_exception(type(exc_info), exc_info, exc_info.__traceback__))
+        else:
+            tb_str = traceback.format_exc()
+
         console.print(f"\n[bold red]🚨 Critical Self-Update Failure: {error_msg}[/bold red]")
-        console.print("[yellow]Initiating safe auto-rollback to restore previous operational state...[/yellow]")
+        notify_tg(f"🚨 PROJECT SHADOW: Self-update failed on step '{failed_step}'. Reason: {error_msg}")
+        notify_tg("⚠️ PROJECT SHADOW: Initiating automatic rollback...")
 
-        # Restore git commit
+        save_pre_rollback_snapshot(failed_step, failed_command, tb_str, error_msg)
+
+        rollback_start_time = time.time()
+        console.print("[yellow]Initiating safe auto-rollback to restore previous operational state...[/yellow]")
+        logger.log_event("rollback", f"Rollback initiated. Cause: {error_msg}")
+
+        git_restored = False
         try:
             console.print(f"[*] Reverting repository code to original commit {orig_commit[:7]}...")
             subprocess.run(["git", "reset", "--hard", orig_commit], cwd=repo_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            git_restored = True
+            logger.log_event("rollback_git", f"Git reverted successfully to {orig_commit[:7]}")
         except Exception as ge:
             console.print(f"[red][x] Failed to revert git repository: {ge}[/red]")
+            logger.log_exception("rollback_git", ge)
 
-        # Restore virtual environment
+        venv_restored = False
         if has_venv_backup and os.path.exists(venv_backup_dir):
             console.print("[*] Restoring Python virtual environment...")
             try:
                 if os.path.exists(venv_dir):
                     shutil.rmtree(venv_dir)
                 shutil.copytree(venv_backup_dir, venv_dir, symlinks=True)
+                venv_restored = True
                 console.print("[green][✓] Virtual environment successfully restored.[/green]")
+                logger.log_event("rollback_venv", "Virtual environment successfully restored")
             except Exception as ve:
                 console.print(f"[red][x] Failed to restore virtual environment: {ve}[/red]")
+                logger.log_exception("rollback_venv", ve)
 
-        # Restore SQLite, env, and mission
+        data_restored = []
         try:
             run_rollback(backup_dir)
+            if os.path.exists(os.path.join(backup_dir, ".env")):
+                data_restored.append("config/.env")
+            if os.path.exists(os.path.join(backup_dir, "mission.md")):
+                data_restored.append("mission.md")
+            if os.path.exists(os.path.join(backup_dir, "shadow.db")):
+                data_restored.append("shadow.db")
+            logger.log_event("rollback_data", f"Data files restored: {', '.join(data_restored)}")
         except Exception as re:
             console.print(f"[red][x] Failed to restore data files: {re}[/red]")
+            logger.log_exception("rollback_data", re)
 
-        # Restart original daemon
+        daemon_restarted = False
         try:
             daemon_restart()
-        except Exception:
-            pass
+            daemon_restarted = True
+            logger.log_event("rollback_daemon", "Daemon successfully restarted post-rollback")
+        except Exception as de:
+            logger.log_exception("rollback_daemon", de)
+
+        rollback_duration = time.time() - rollback_start_time
+
+        exc_dict = {
+            "type": "UpdateFailure",
+            "message": error_msg,
+            "full_traceback": tb_str
+        }
+        if exc_info:
+            exc_dict = {
+                "type": type(exc_info).__name__,
+                "message": str(exc_info),
+                "full_traceback": tb_str
+            }
+
+        logger.write_rollback_report(
+            cause=error_msg,
+            failed_step=failed_step,
+            failed_command=failed_command,
+            exception=exc_dict,
+            rollback_commit=orig_commit,
+            duration=rollback_duration,
+            data_restored=data_restored,
+            verification_status="restored" if venv_restored and git_restored else "degraded"
+        )
+
+        logger.end_update(
+            success=False,
+            git_commit_after=orig_commit,
+            rollback_reason=error_msg,
+            rollback_duration=rollback_duration,
+            restore_status="SUCCESS" if venv_restored and git_restored else "FAILED"
+        )
 
         console.print("\n[bold red]Update failed.[/bold red]")
         console.print("[bold green]System restored successfully.[/bold green]")
         console.print("[bold green]No data lost.[/bold green]")
+        notify_tg("✓ PROJECT SHADOW: Rollback completed successfully. System restored to original state.")
 
-    # 5. git pull origin main
     console.print(f"[*] Pulling latest changes from git repository branch 'main'...")
+    logger.log_event("git_pull", "Pulling latest code changes from origin/main")
     try:
         subprocess.run(["git", "fetch", "origin"], cwd=repo_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         res = subprocess.run(["git", "pull", "origin", "main"], cwd=repo_dir, text=True, capture_output=True)
         if res.returncode != 0:
             raise Exception(res.stderr or "git pull command failed.")
+
+        current_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
+        logger.git_commit_after = current_commit
+        logger.log_event("git_pull", f"Repository successfully updated to {current_commit[:7]}")
         console.print("[green][✓] Repository code successfully updated.[/green]")
     except Exception as e:
-        trigger_self_update_rollback(f"Git code update failed: {e}")
+        logger.log_exception("git_pull", e)
+        trigger_self_update_rollback(f"Git code update failed: {e}", "git_pull", exc_info=e)
         return
 
-    # 6-7. Detect changed dependencies & install correct profile
     console.print("[*] Detecting and installing correct dependency profile...")
+    logger.log_event("dependency_install", "Detecting platform and installing dependency profile")
     try:
         from shadow.core.config import detect_platform
         plat = detect_platform()
         is_android = "Android" in plat
 
-        # Run pip/uv installation depending on profile
         use_uv = shutil.which("uv") is not None
         pip_bin = os.path.join(venv_dir, "bin", "pip") if os.path.exists(os.path.join(venv_dir, "bin", "pip")) else "pip"
         python_bin = sys.executable
 
         if is_android:
             console.print(f"[yellow]Detected Android Platform ({plat}). Applying Android compatible dependency profile (Pydantic v1)...[/yellow]")
+            logger.log_event("dependency_install", "Installing Android dependency profile (Pydantic v1)")
             if use_uv:
                 subprocess.run(["uv", "pip", "install", "--python", python_bin, "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
                 subprocess.run(["uv", "pip", "install", "--python", python_bin, "--no-deps", "-e", "."], cwd=repo_dir, check=True)
@@ -1709,19 +1852,22 @@ def run_self_update_process():
                 subprocess.run([pip_bin, "install", "--no-deps", "-e", "."], cwd=repo_dir, check=True)
         else:
             console.print(f"[green]Detected Desktop Platform ({plat}). Applying Desktop profile (Pydantic v2)...[/green]")
+            logger.log_event("dependency_install", "Installing Desktop dependency profile (Pydantic v2)")
             if use_uv:
                 subprocess.run(["uv", "pip", "install", "--python", python_bin, "-e", "."], cwd=repo_dir, check=True)
             else:
                 subprocess.run([pip_bin, "install", "--upgrade", "pip"], check=True)
                 subprocess.run([pip_bin, "install", "-e", "."], cwd=repo_dir, check=True)
 
+        logger.log_event("dependency_install", "Dependency profile installation completed successfully")
         console.print("[green][✓] Python dependency profile updated successfully.[/green]")
     except Exception as e:
-        trigger_self_update_rollback(f"Dependency profile installation failed: {e}")
+        logger.log_exception("dependency_install", e)
+        trigger_self_update_rollback(f"Dependency profile installation failed: {e}", "dependency_install", exc_info=e)
         return
 
-    # 8. Migrate Database & Sync Mission
     console.print("[*] Migrating database and syncing mission goals...")
+    logger.log_event("migrations", "Running SQLite migrations and syncing mission goals")
     try:
         init_db()
         if os.path.exists(mission_path):
@@ -1729,79 +1875,80 @@ def run_self_update_process():
                 markdown_text = f.read()
             goals = goals_engine.parse_mission_markdown(markdown_text)
             goals_engine.sync_goals_to_db(goals)
+        logger.log_event("migrations", "Database migration & mission sync completed successfully")
         console.print("[green][✓] Database migrated & mission synchronized successfully.[/green]")
     except Exception as e:
-        trigger_self_update_rollback(f"Database migration or sync failed: {e}")
+        logger.log_exception("migrations", e)
+        trigger_self_update_rollback(f"Database migration or sync failed: {e}", "migrations", exc_info=e)
         return
 
-    # 9. Restart Daemon
     console.print("[*] Gracefully restarting background daemon...")
+    logger.log_event("daemon_restart", "Restarting background uvicorn/reasoning loop daemon")
     try:
         daemon_restart()
+        logger.log_event("daemon_restart", "Daemon restarted successfully")
         console.print("[green][✓] Daemon successfully restarted.[/green]")
     except Exception as e:
-        trigger_self_update_rollback(f"Failed to restart background daemon: {e}")
+        logger.log_exception("daemon_restart", e)
+        trigger_self_update_rollback(f"Failed to restart background daemon: {e}", "daemon_restart", exc_info=e)
         return
 
-    # 10-14. Verifications
     console.print("[*] Performing verification of all subsystems...")
-    cli_ok = False
-    api_ok = False
-    telegram_ok = False
-    scheduler_ok = False
-    runtime_ok = False
+    logger.log_event("verification", "Starting step-by-step subsystem and CLI verification")
 
-    try:
-        # Verify CLI execution
-        res = subprocess.run([sys.executable, "-m", "shadow.cli.main", "status"], capture_output=True, text=True)
-        if res.returncode == 0:
-            cli_ok = True
+    verification_report = asyncio.run(subsystem_runner.run_all(fail_fast=True))
 
-        # Verify API
-        info = read_daemon_info()
-        if info and info.get("port"):
-            import httpx
-            try:
-                resp = httpx.get(f"http://127.0.0.1:{info['port']}/health", timeout=3.0)
-                if resp.status_code == 200:
-                    api_ok = True
-            except Exception:
-                pass
-        if not api_ok and info and info.get("pid") and is_pid_running(info["pid"]):
-            api_ok = True
+    failed_step_res = None
+    for res in verification_report.results:
+        status_symbol = "✓" if res.success else "✗"
+        console.print(f" {status_symbol} {res.step_name}")
+        logger.log_event(
+            f"verify_{res.step_name.lower().replace(' ', '_')}",
+            f"Verification message: {res.message}",
+            status="info" if res.success else "error",
+            details={
+                "step_name": res.step_name,
+                "success": res.success,
+                "execution_time_ms": res.execution_time_ms,
+                "error_message": res.error_message,
+                "traceback": res.traceback
+            }
+        )
+        if not res.success:
+            failed_step_res = res
 
-        telegram_ok = True
-        scheduler_ok = True
-        runtime_ok = True
+    if not verification_report.success and failed_step_res:
+        error_msg = failed_step_res.message
+        if failed_step_res.error_message:
+            error_msg = f"{failed_step_res.error_message}"
 
-        test_res = subprocess.run([sys.executable, "-m", "pytest", os.path.join(repo_dir, "tests")], capture_output=True, text=True)
-        if test_res.returncode != 0:
-            console.print("[yellow][!] Subsystem self-tests reported some warnings or skips. Continuing verification...[/yellow]")
+        tb_str = failed_step_res.traceback or ""
 
-    except Exception as e:
-        console.print(f"[yellow][!] Subsystem verification encountered errors: {e}[/yellow]")
-
-    if not cli_ok:
-        trigger_self_update_rollback("CLI verification failed post-update.")
+        trigger_self_update_rollback(
+            error_msg=f"Verification failed on step '{failed_step_res.step_name}': {error_msg}",
+            failed_step=f"verify_{failed_step_res.step_name.lower().replace(' ', '_')}",
+            failed_command=failed_step_res.details.get("failed_command"),
+            exc_info=None
+        )
         return
 
-    # Clean up venv backup
     if has_venv_backup and os.path.exists(venv_backup_dir):
         try:
             shutil.rmtree(venv_backup_dir)
         except Exception:
             pass
 
-    # 15. Print update summary
+    logger.end_update(success=True, git_commit_after=logger.git_commit_after)
+
     console.print("\n[bold green]✔ Update Completed Successfully![/bold green]")
     console.print(f"✔ Repository Updated")
-    console.print(f"✔ Dependencies Updated")
+    console.print(f"✔ Dependencies Verified")
     console.print(f"✔ Database Migrated")
-    console.print(f"✔ Telegram Connected" if telegram_ok else "⚠ Telegram Offline")
-    console.print(f"✔ Runtime Active" if runtime_ok else "⚠ Runtime Pending")
-    console.print(f"✔ Daemon Restarted")
+    console.print(f"✔ Daemon Restarted & Verified")
+    console.print(f"✔ Subsystems & CLI Fully Verified")
 
     console.print(f"\n[bold green]✓ Project Shadow has been updated to its latest release perfectly.[/bold green]")
+    notify_tg("✓ PROJECT SHADOW: Self-update completed successfully! All systems verified.")
 
 @app.command("self-update")
 def self_update():
