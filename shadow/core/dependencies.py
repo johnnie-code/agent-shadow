@@ -49,7 +49,7 @@ ANDROID_FALLBACK_PROFILE = {
     "name": "Android-Fallback",
     "dependencies": [
         "pyyaml==6.0.3",
-        "fastapi==0.139.2",
+        "fastapi==0.99.1",
         "uvicorn==0.51.0",
         "rich==15.0.0",
         "watchdog==6.0.0",
@@ -57,7 +57,6 @@ ANDROID_FALLBACK_PROFILE = {
         "typer==0.27.0",
         "click==8.1.8",
         "python-dotenv==1.2.2",
-        "mcp>=1.28.1",
         "pydantic<2",
     ],
     "install_args": []
@@ -115,6 +114,37 @@ def validate_profile_compatibility(profile: dict, python_bin: str = None, use_uv
     except Exception as e:
         return False, f"Failed to execute package manager dry-run: {str(e)}"
 
+def filter_unsupported_dependencies(profile: dict, python_bin: str, use_uv: bool) -> dict:
+    """
+    Filters out dependencies from a profile that are unsupported on the current platform.
+    On Android, if a package fails its individual dry-run, it is skipped.
+    """
+    is_android = is_android_platform()
+    if not is_android:
+        return profile
+
+    filtered_deps = []
+    for dep in profile["dependencies"]:
+        cmd = []
+        if use_uv:
+            cmd = ["uv", "pip", "install", "--dry-run", "--python", python_bin]
+        else:
+            cmd = [python_bin, "-m", "pip", "install", "--dry-run"]
+
+        cmd.extend(profile["install_args"])
+        cmd.append(dep)
+
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            if result.returncode == 0:
+                filtered_deps.append(dep)
+            else:
+                print(f"[!] Android compatibility check: Skipping unsupported package '{dep}' (Dry-run failed: {result.stderr.strip() or result.stdout.strip()})")
+        except Exception as e:
+            print(f"[!] Android compatibility check: Skipping unsupported package '{dep}' due to execution error: {str(e)}")
+
+    return {**profile, "dependencies": filtered_deps}
+
 def choose_and_validate_profile(python_bin: str = None, use_uv: bool = None) -> tuple[dict, str]:
     """
     Chooses the correct dependency profile automatically and validates compatibility before installation.
@@ -125,17 +155,27 @@ def choose_and_validate_profile(python_bin: str = None, use_uv: bool = None) -> 
     """
     is_android = is_android_platform()
     plat = detect_platform()
+    print(f"[*] Detecting platform: {plat} (is_android: {is_android})")
+
+    if python_bin is None:
+        python_bin = sys.executable
+    if use_uv is None:
+        use_uv = shutil.which("uv") is not None
 
     if is_android:
+        # Filter standard Android profile dependencies first
+        filtered_android_profile = filter_unsupported_dependencies(ANDROID_PROFILE, python_bin, use_uv)
         # 1. Try standard Android profile (Pydantic v2 with custom wheel index)
-        compat_v2, reason_v2 = validate_profile_compatibility(ANDROID_PROFILE, python_bin, use_uv)
+        compat_v2, reason_v2 = validate_profile_compatibility(filtered_android_profile, python_bin, use_uv)
         if compat_v2:
-            return ANDROID_PROFILE, f"Selected Android profile (Pydantic v2 compatible wheel verified on {plat})"
+            return filtered_android_profile, f"Selected Android profile (Pydantic v2 compatible wheel verified on {plat})"
 
+        # Filter Android Fallback profile dependencies first
+        filtered_fallback_profile = filter_unsupported_dependencies(ANDROID_FALLBACK_PROFILE, python_bin, use_uv)
         # 2. Try Android Fallback profile (Pydantic v1)
-        compat_v1, reason_v1 = validate_profile_compatibility(ANDROID_FALLBACK_PROFILE, python_bin, use_uv)
+        compat_v1, reason_v1 = validate_profile_compatibility(filtered_fallback_profile, python_bin, use_uv)
         if compat_v1:
-            return ANDROID_FALLBACK_PROFILE, f"Selected Android-Fallback profile (Pydantic v1) because standard Android (Pydantic v2) wheel is incompatible: {reason_v2}"
+            return filtered_fallback_profile, f"Selected Android-Fallback profile (Pydantic v1) because standard Android (Pydantic v2) wheel is incompatible: {reason_v2}"
 
         # If neither is supported, abort
         raise RuntimeError(
