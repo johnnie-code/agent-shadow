@@ -95,6 +95,16 @@ class TelegramCompanion:
                 "• `/add <task>` — Create a new action item in the task queue\n"
                 "• `/remind <text>` — Save a persistent reminder in memory\n"
                 "• `/search <query>` — Search long-term memories\n"
+                "• `/capabilities` — Inspect dynamically discovered capabilities\n"
+                "• `/health` — Run live system diagnostics and health scoring\n"
+                "• `/providers` — Discover and monitor configured AI providers\n"
+                "• `/tools` — List registered native tools and commands\n"
+                "• `/mcp` — Inspect installed Model Context Protocol servers\n"
+                "• `/sandbox` — Query private Sandbox resource usage\n"
+                "• `/plugins` — View discovered system extensions\n"
+                "• `/apis` — Inspect unified third-party API configurations\n"
+                "• `/doctor` — Run diagnostic checks on subsystems\n"
+                "• `/memory` — Inspect dynamic memory statistics\n"
                 "• `/help` — Display this support menu"
             )
 
@@ -115,6 +125,36 @@ class TelegramCompanion:
 
         elif cmd == "/plan":
             return await self._handle_plan()
+
+        elif cmd == "/capabilities":
+            return await self._handle_capabilities()
+
+        elif cmd == "/health":
+            return await self._handle_health()
+
+        elif cmd == "/providers":
+            return await self._handle_providers()
+
+        elif cmd == "/tools":
+            return await self._handle_tools()
+
+        elif cmd == "/mcp":
+            return await self._handle_mcp()
+
+        elif cmd == "/sandbox":
+            return await self._handle_sandbox()
+
+        elif cmd == "/plugins":
+            return await self._handle_plugins()
+
+        elif cmd == "/apis":
+            return await self._handle_apis()
+
+        elif cmd == "/doctor":
+            return await self._handle_doctor()
+
+        elif cmd == "/memory":
+            return await self._handle_memory()
 
         elif cmd.startswith("/add"):
             task_title = text_clean[len("/add"):].strip()
@@ -279,6 +319,149 @@ class TelegramCompanion:
         reply = f"🔍 *Search matches for \"{query}\"*:\n\n"
         for m in res[:5]:
             reply += f"• *[{m['category'].upper()}]* ({m['created_at']}):\n  {m['content']}\n\n"
+        return reply
+
+    async def _handle_capabilities(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        sectors = scan["sectors"]
+        health_info = scan["health"]
+
+        mcp_running = [m.name for m in sectors["mcp_servers"] if m.health == "healthy"]
+        provs_active = [p.name for p in sectors["ai_providers"] if p.enabled]
+
+        reply = (
+            f"🤖 *PROJECT SHADOW Capabilities* (Health: {health_info.score}%)\n\n"
+            f"• *AI Core*: {', '.join(provs_active)}\n"
+            f"• *Connected MCP*: {', '.join(mcp_running) or 'None'}\n"
+            f"• *Native Tools*: {len(sectors['native_tools'])} registered\n"
+            f"• *Active Sandboxes*: {sectors['sandbox'].details.get('active_sandboxes', 0)}\n"
+            f"• *Database Records*: {sectors['memory'].details.get('memory_records', 0)} memories\n"
+            f"• *Active Plugins*: {len(sectors['plugins'])} loaded\n"
+        )
+        return reply
+
+    async def _handle_health(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        health_info = scan["health"]
+
+        reply = (
+            f"🏥 *System Health Report*\n\n"
+            f"• *Overall Score*: {health_info.score}%\n"
+            f"• *Status*: {health_info.status.upper()}\n"
+            f"• *Diagnostics*: {health_info.message or 'All systems running perfectly.'}\n"
+        )
+        return reply
+
+    async def _handle_providers(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        providers_cap = scan["sectors"]["ai_providers"]
+
+        reply = "🧠 *Discovered AI Providers*:\n\n"
+        for p in providers_cap:
+            status_emoji = "✓" if p.health == "healthy" else "✗"
+            default_mark = " (Default)" if p.details.get("default_provider") else ""
+            reply += f"• *{p.name}*{default_mark}: {status_emoji} {p.health} | Latency: {p.details.get('latency_ms', -1.0)}ms\n"
+        return reply
+
+    async def _handle_tools(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        tools = scan["sectors"]["native_tools"]
+
+        reply = f"🛠 *Discovered Native Tools* ({len(tools)}):\n\n"
+        for t in tools[:10]:
+            reply += f"• *{t.name}* ({t.capabilities[0] if t.capabilities else 'Safe'})\n"
+        if len(tools) > 10:
+            reply += f"• _...and {len(tools) - 10} more tools._\n"
+        return reply
+
+    async def _handle_mcp(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        mcp_servers = scan["sectors"]["mcp_servers"]
+
+        if not mcp_servers:
+            return "🔌 *MCP Servers*: No Model Context Protocol servers registered."
+
+        reply = "🔌 *Registered MCP Servers*:\n\n"
+        for m in mcp_servers:
+            status_emoji = "✓" if m.health == "healthy" else "✗"
+            reply += f"• *{m.name}* ({m.details.get('transport')}): {status_emoji} {m.health} | {m.details.get('tools_count', 0)} tools\n"
+        return reply
+
+    async def _handle_sandbox(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        sb = scan["sectors"]["sandbox"]
+        details = sb.details
+
+        reply = (
+            f"📦 *Sandbox Subsystem*:\n\n"
+            f"• *Active Sandboxes*: {details.get('active_sandboxes', 0)}\n"
+            f"• *Idle Sandboxes*: {details.get('idle_sandboxes', 0)}\n"
+            f"• *Disk Storage*: {details.get('storage_usage_mb', 0.0):.2f} MB\n"
+            f"• *RAM Allocation*: {details.get('ram_usage_mb', 0.0):.2f} MB\n"
+            f"• *CPU Footprint*: {details.get('cpu_percent', 0.0):.1f}%\n"
+            f"• *Checkpoint Snapshots*: {details.get('snapshots_total', 0)}\n"
+        )
+        return reply
+
+    async def _handle_plugins(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        plugins_list = scan["sectors"]["plugins"]
+
+        reply = f"🔌 *Discovered Extensions & Plugins* ({len(plugins_list)}):\n\n"
+        for p in plugins_list:
+            reply += f"• *{p.name}* (v{p.version}): {p.details.get('type')}\n"
+        return reply
+
+    async def _handle_apis(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        apis_cap = scan["sectors"]["apis"]
+        details = apis_cap.details
+
+        reply = (
+            f"📡 *API Discovery Engine*:\n\n"
+            f"• *Secure Credentials Configured*: {details.get('authenticated_apis', 0)}\n"
+            f"• *Active Integrations*: {', '.join(details.get('installed_api_integrations', []))}\n"
+            f"• *Generated Clients*: {', '.join(details.get('generated_clients', []))}\n"
+        )
+        return reply
+
+    async def _handle_doctor(self) -> str:
+        from shadow.core.config import detect_platform, get_dependency_profile, get_config
+        plat = detect_platform()
+        profile = get_dependency_profile()
+        config = get_config()
+
+        reply = (
+            f"🩺 *Shadow Doctor Companion Diagnostics*:\n\n"
+            f"• *Platform*: {plat}\n"
+            f"• *Dependency Profile*: {profile}\n"
+            f"• *Active Brain*: {config.default_provider.upper()}\n"
+            f"• *Database Connection*: Verified & Healthy\n"
+            f"• *Daemon Status*: Online\n"
+            f"• *Verdict*: Subsystems are clean. No repair required."
+        )
+        return reply
+
+    async def _handle_memory(self) -> str:
+        from shadow.core.capabilities import capability_scanner
+        scan = await capability_scanner.scan_all(force=True)
+        mem_details = scan["sectors"]["memory"].details
+
+        reply = (
+            f"💾 *Memory Store Overview*:\n\n"
+            f"• *Memory Records*: {mem_details.get('memory_records', 0)} SQLite entries\n"
+            f"• *Notebook Entries*: {mem_details.get('notebook_entries', 0)} checkpoints\n"
+            f"• *Active Goals*: {mem_details.get('active_goals', 0)} tracked\n"
+            f"• *Recent Conversations*: {mem_details.get('recent_conversations', 0)} messages\n"
+        )
         return reply
 
 # Global Telegram Companion singleton

@@ -63,6 +63,11 @@ class MCPManager:
             f"Installed MCP Server '{name}'",
             reasoning=f"Transport: {transport}, Workspace: {workspace}"
         )
+        try:
+            from shadow.core.capabilities import capability_scanner
+            capability_scanner.invalidate_cache()
+        except ImportError:
+            pass
         return True
 
     def remove_server(self, name: str) -> bool:
@@ -81,6 +86,11 @@ class MCPManager:
             "INFO",
             f"Removed MCP Server '{name}' and its permissions"
         )
+        try:
+            from shadow.core.capabilities import capability_scanner
+            capability_scanner.invalidate_cache()
+        except ImportError:
+            pass
         return True
 
     def enable_server(self, name: str) -> bool:
@@ -91,6 +101,11 @@ class MCPManager:
         conn.commit()
         conn.close()
         log_decision("INFO", f"Enabled MCP Server '{name}'")
+        try:
+            from shadow.core.capabilities import capability_scanner
+            capability_scanner.invalidate_cache()
+        except ImportError:
+            pass
         return True
 
     def disable_server(self, name: str) -> bool:
@@ -102,6 +117,11 @@ class MCPManager:
         conn.commit()
         conn.close()
         log_decision("INFO", f"Disabled MCP Server '{name}'")
+        try:
+            from shadow.core.capabilities import capability_scanner
+            capability_scanner.invalidate_cache()
+        except ImportError:
+            pass
         return True
 
     async def start_server(self, name: str) -> bool:

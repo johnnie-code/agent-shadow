@@ -10,6 +10,14 @@ from shadow.core.mcp_manager import mcp_manager
 mcp_app = typer.Typer(name="mcp", help="Manage external Model Context Protocol (MCP) servers.")
 console = Console()
 
+@mcp_app.callback(invoke_without_command=True)
+def mcp_callback(ctx: typer.Context):
+    """
+    Model Context Protocol (MCP) Management interface.
+    """
+    if ctx.invoked_subcommand is None:
+        mcp_list()
+
 @mcp_app.command("install")
 def mcp_install(
     name: str = typer.Argument(..., help="Unique name for the MCP server"),
