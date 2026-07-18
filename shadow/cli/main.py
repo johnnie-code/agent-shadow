@@ -33,6 +33,9 @@ app.add_typer(sandbox_app, name="sandbox")
 memory_app = typer.Typer(name="memory", help="Manage persistent memories.")
 app.add_typer(memory_app, name="memory")
 
+from shadow.cli.mcp import mcp_app
+app.add_typer(mcp_app, name="mcp")
+
 console = Console()
 
 # --- Sandbox CLI Subcommands ---

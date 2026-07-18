@@ -6,6 +6,12 @@ class MockProvider(BaseProvider):
     def __init__(self, fixed_response: str = "Mock response from Shadow AI Provider Layer."):
         self.fixed_response = fixed_response
 
+    def initialize(self) -> None:
+        pass
+
+    async def health_check(self) -> bool:
+        return True
+
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         return 0.0
 
@@ -15,7 +21,6 @@ class MockProvider(BaseProvider):
         # If we need structured json outputs in mock responses, let's auto-generate them
         response_text = self.fixed_response
         if "JSON" in last_message.upper() or "schema" in last_message.lower():
-            # Try to return a generic JSON if requested
             response_text = json.dumps({
                 "status": "success",
                 "message": "Mock structured JSON response",
@@ -46,7 +51,38 @@ class MockProvider(BaseProvider):
 
         return {
             "content": response_text,
-            "tokens_used": 150,
+            "tokens_used": 150,  # Retain standard mock token usage for backward test compatibility
             "estimated_cost": 0.0,
             "model": "shadow-mock-model"
         }
+
+    async def stream_chat(self, messages: List[Dict[str, str]], **kwargs):
+        res = await self.chat(messages, **kwargs)
+        yield res["content"]
+
+    async def embed(self, texts: List[str], **kwargs) -> List[List[float]]:
+        return [[0.0] * 1536 for _ in texts]
+
+    def list_models(self) -> List[str]:
+        return ["shadow-mock-model"]
+
+    def supports_tools(self) -> bool:
+        return True
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def supports_images(self) -> bool:
+        return True
+
+    def supports_reasoning(self) -> bool:
+        return True
+
+    def supports_embeddings(self) -> bool:
+        return True
+
+    def supports_mcp(self) -> bool:
+        return True
+
+    def shutdown(self) -> None:
+        pass

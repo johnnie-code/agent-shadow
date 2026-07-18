@@ -155,5 +155,43 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);")
 
+    # 8. MCP Servers Table (registry of installed servers)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+        name TEXT PRIMARY KEY,
+        description TEXT,
+        version TEXT,
+        transport TEXT,
+        url TEXT,
+        command TEXT,
+        args TEXT,
+        env TEXT,
+        status TEXT DEFAULT 'stopped',
+        tools TEXT,
+        resources TEXT,
+        prompts TEXT,
+        permissions TEXT,
+        authentication TEXT,
+        workspace TEXT DEFAULT 'global',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # 9. MCP Permissions Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS mcp_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_name TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        permission_level TEXT DEFAULT 'Ask Every Time',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(server_name, tool_name)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_status ON mcp_servers(status);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mcp_permissions_server ON mcp_permissions(server_name);")
+
     conn.commit()
     conn.close()

@@ -2,6 +2,18 @@ import asyncio
 from typing import Dict, List, Callable, Any, Awaitable
 from shadow.core.logging import log_decision
 
+class EventTypes:
+    PROVIDER_CONNECTED = "ProviderConnected"
+    PROVIDER_FAILED = "ProviderFailed"
+    MCP_CONNECTED = "MCPConnected"
+    TOOL_EXECUTED = "ToolExecuted"
+    SANDBOX_CREATED = "SandboxCreated"
+    TASK_COMPLETED = "TaskCompleted"
+    BACKGROUND_JOB_FINISHED = "BackgroundJobFinished"
+    MEMORY_UPDATED = "MemoryUpdated"
+    NOTIFICATIONS = "Notifications"
+
+
 class EventBus:
     def __init__(self):
         # Maps event names to a list of async callback functions

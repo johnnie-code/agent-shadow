@@ -60,6 +60,21 @@ class OllamaProvider(BaseProvider):
         self.timeout = 30.0
         self.max_retries = 3
 
+    def initialize(self) -> None:
+        pass
+
+    async def health_check(self) -> bool:
+        try:
+            url = self._build_url(self.api_base, "tags" if self.mode != "cloud" else "")
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers, timeout=5.0)
+                return resp.status_code in (200, 401, 403, 404)
+        except Exception:
+            return False
+
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         # Ollama is typically free/local, so cost is 0.0.
         # For Ollama Cloud, let's assume a mock small pricing or 0.0.
@@ -72,6 +87,8 @@ class OllamaProvider(BaseProvider):
         without producing duplicate /api.
         """
         base = base_url.rstrip("/")
+        if not endpoint:
+            return base
         if base.endswith("/api"):
             return f"{base}/{endpoint.lstrip('/')}"
         else:
@@ -323,3 +340,35 @@ class OllamaProvider(BaseProvider):
 
         mock_prov = MockProvider()
         return await mock_prov.chat(messages, **kwargs)
+
+    async def stream_chat(self, messages: List[Dict[str, str]], **kwargs):
+        # Implement async generator for streaming
+        call_kwargs = kwargs.copy()
+        call_kwargs["stream"] = True
+        chunks = []
+        call_kwargs["stream_callback"] = chunks.append
+        res = await self.chat(messages, **call_kwargs)
+        # Yield single chunks in sequence
+        for chunk in chunks:
+            yield chunk
+
+    def list_models(self) -> List[str]:
+        return [self.model]
+
+    def supports_tools(self) -> bool:
+        return False
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def supports_images(self) -> bool:
+        return True
+
+    def supports_reasoning(self) -> bool:
+        return False
+
+    def supports_mcp(self) -> bool:
+        return True
+
+    def shutdown(self) -> None:
+        pass
