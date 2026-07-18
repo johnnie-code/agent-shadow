@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="chat"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_chat"
+        android:shortcutShortLabel="Quick Chat">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.shadow.os"
+            android:targetClass="com.shadow.os.MainActivity"
+            android:data="shadowos://chat" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="new_task"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_task"
+        android:shortcutShortLabel="New Task">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.shadow.os"
+            android:targetClass="com.shadow.os.MainActivity"
+            android:data="shadowos://tasks/new" />
+    </shortcut>
+</shortcuts>

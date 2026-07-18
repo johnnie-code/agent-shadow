@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ShadowOS" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0D0D0D</item>
+        <item name="android:windowBackground">#0D0D0D</item>
+    </style>
+</resources>
