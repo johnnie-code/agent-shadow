@@ -184,40 +184,22 @@ install_dependencies() {
     log_header "Installing Python dependencies..."
     log_warn "Python Binary: $python_bin, UV: $use_uv_tool, Rustless Fallback: $force_fallback"
 
-    # Make sure we use correct pip/python in virtualenv
-    local pip_bin="$VENV_DIR/bin/pip"
-
-    if [ "$force_fallback" = true ]; then
-        log_warn "Applying fallback dependency set (using pure Python pydantic<2 to avoid Rust)..."
-        if [ "$use_uv_tool" = true ]; then
-            uv pip install --python "$VENV_DIR/bin/python" pyyaml fastapi uvicorn rich watchdog httpx typer click python-dotenv "pydantic<2" && \
-            uv pip install --python "$VENV_DIR/bin/python" --no-deps -e .
-        else
-            "$pip_bin" install --upgrade pip && \
-            "$pip_bin" install pyyaml fastapi uvicorn rich watchdog httpx typer click python-dotenv "pydantic<2" && \
-            "$pip_bin" install --no-deps -e .
-        fi
-        return $?
+    # Delegate to shadow.core.dependencies module
+    local uv_val="False"
+    if [ "$use_uv_tool" = "true" ]; then
+        uv_val="True"
     fi
 
-    if [ "$use_uv_tool" = true ]; then
-        if [ "$IS_TERMUX" = true ]; then
-            log_warn "Termux detected. Attempting install with precompiled wheel index and --only-binary=pydantic-core..."
-            uv pip install --python "$VENV_DIR/bin/python" --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
-        else
-            uv pip install --python "$VENV_DIR/bin/python" -e .
-        fi
-        return $?
-    else
-        "$pip_bin" install --upgrade pip || true
-        if [ "$IS_TERMUX" = true ]; then
-            log_warn "Termux detected. Attempting install with precompiled wheel index and --only-binary=pydantic-core..."
-            "$pip_bin" install --only-binary=pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/ -e .
-        else
-            "$pip_bin" install -e .
-        fi
-        return $?
-    fi
+    PYTHONPATH=. "$python_bin" -c "
+import sys
+try:
+    import shadow.core.dependencies as deps
+    deps.install_compatible_profile(python_bin='$python_bin', use_uv=$uv_val)
+except Exception as e:
+    print(f'Error during dependency installation: {e}', file=sys.stderr)
+    sys.exit(1)
+"
+    return $?
 }
 
 # 5. Virtual Environment Creation & Resilient Dependencies Installation
