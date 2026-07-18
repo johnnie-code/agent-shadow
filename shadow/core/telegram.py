@@ -187,6 +187,31 @@ class TelegramCompanion:
             query = text_clean[len("/search"):].strip()
             return await self._handle_search(query)
 
+        elif cmd.startswith("/execute"):
+            query = text_clean[len("/execute"):].strip()
+            return await self._handle_telegram_execute(query)
+
+        elif cmd == "/progress":
+            return await self._handle_telegram_progress()
+
+        elif cmd == "/runtime":
+            return await self._handle_telegram_runtime()
+
+        elif cmd == "/state":
+            return await self._handle_telegram_state()
+
+        elif cmd == "/queue":
+            return await self._handle_telegram_queue()
+
+        elif cmd == "/retry":
+            return await self._handle_telegram_retry()
+
+        elif cmd == "/cancel":
+            return await self._handle_telegram_cancel()
+
+        elif cmd == "/resume":
+            return await self._handle_telegram_resume()
+
         else:
             # Natural dialog/fallback -> route to conversational engine!
             from shadow.core.runtime import conversation_engine
@@ -577,6 +602,81 @@ class TelegramCompanion:
             f"• *Recent Conversations*: {mem_details.get('recent_conversations', 0)} messages\n"
         )
         return reply
+
+    async def _handle_telegram_execute(self, query: str) -> str:
+        if not query:
+            return "⚠️ Usage: `/execute <request>`\nExample: `/execute Build an HTML about yourself`"
+        from shadow.core.runtime.runtime import shadow_runtime
+        return await shadow_runtime.process_user_request(query, session_id="telegram_companion")
+
+    async def _handle_telegram_progress(self) -> str:
+        from shadow.core.runtime.runtime import shadow_runtime
+        metrics = shadow_runtime.get_metrics()
+        reply = f"📊 *Active Status*: {metrics['status']}\n\n"
+        steps = metrics.get("progress_steps", [])
+        if not steps:
+            reply += "No active progress steps logged."
+            return reply
+        for step in steps:
+            dur = f" ({step['duration']:.1f}s)" if step["duration"] else ""
+            reply += f"• *{step['name']}* [{step['status']}]: {step['message']}{dur}\n"
+        return reply
+
+    async def _handle_telegram_runtime(self) -> str:
+        from shadow.core.runtime.runtime import shadow_runtime
+        metrics = shadow_runtime.get_metrics()
+        return (
+            "⚙️ *Autonomous Runtime Metrics*:\n\n"
+            f"• *Current State*: {metrics['current_state']}\n"
+            f"• *Status*: {metrics['status']}\n"
+            f"• *Running Tasks*: {metrics['running_tasks']}\n"
+            f"• *Selected Providers*: {', '.join(metrics['selected_providers'])}"
+        )
+
+    async def _handle_telegram_state(self) -> str:
+        from shadow.core.runtime.runtime import shadow_runtime
+        metrics = shadow_runtime.get_metrics()
+        return f"🤖 *Current State Machine State*: `{metrics['current_state']}`"
+
+    async def _handle_telegram_queue(self) -> str:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, priority_score, status FROM tasks WHERE status = 'pending' ORDER BY priority_score DESC")
+        tasks = cursor.fetchall()
+        conn.close()
+        if not tasks:
+            return "📋 No pending tasks in queue."
+        reply = "📋 *Action Queue (Pending)*:\n\n"
+        for t in tasks:
+            reply += f"• *#{t['id']}*: {t['title']} (Score: {t['priority_score']:.1f})\n"
+        return reply
+
+    async def _handle_telegram_retry(self) -> str:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title FROM tasks WHERE status IN ('failed', 'cancelled', 'pending') ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return "⚠️ No failed, cancelled, or pending tasks found to retry."
+        task_id = row["id"]
+        from shadow.goals.executor import execution_engine
+        res = await execution_engine.execute_task(task_id)
+        if res.get("success"):
+            return f"✅ Retry succeeded for Task *#{task_id}*!"
+        return f"❌ Retry failed for Task *#{task_id}*: {res.get('error')}"
+
+    async def _handle_telegram_cancel(self) -> str:
+        from shadow.core.runtime.runtime import shadow_runtime
+        from shadow.core.runtime.state_machine import RuntimeState
+        shadow_runtime.execution_engine.state_machine.transition_to(RuntimeState.CANCELLED, "Telegram manually cancelled")
+        return "✅ Runtime state machine transitioned to `CANCELLED`."
+
+    async def _handle_telegram_resume(self) -> str:
+        from shadow.core.runtime.runtime import shadow_runtime
+        from shadow.core.runtime.state_machine import RuntimeState
+        shadow_runtime.execution_engine.state_machine.transition_to(RuntimeState.RESUMED, "Telegram manually resumed")
+        return "✅ Runtime state machine transitioned to `RESUMED`."
 
 # Global Telegram Companion singleton
 telegram_companion = TelegramCompanion()
