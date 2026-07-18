@@ -873,44 +873,48 @@ def config_set_env(key: str, value: str):
 @app.command()
 def settings():
     """
-    Interactively view and configure Shadow OS preferences and API keys.
+    Interactively view and configure Shadow OS preferences and API keys in a loop.
     """
-    config = get_config()
-    console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
-    console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
-    console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-    console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
-    console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
-    console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
-    console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
-    console.print("7. Exit Settings\n")
+    while True:
+        config = get_config()
+        console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
+        console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
+        console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
+        console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
+        console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
+        console.print("7. Exit Settings\n")
 
-    choice = typer.prompt("Select an option to edit (1-7)", default="7")
-    if choice == "1":
-        new_val = typer.prompt("Enter new User Name", default=config.user_name)
-        config_set_env("user_name", new_val)
-    elif choice == "2":
-        new_val = typer.prompt("Enter new Assistant Name", default=config.assistant_name)
-        config_set_env("assistant_name", new_val)
-    elif choice == "3":
-        new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini)", default=config.default_provider)
-        config_set_env("default_provider", new_provider)
-        if new_provider != "mock":
-            new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", password=True)
-            if new_key:
-                config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
-    elif choice == "4":
-        new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences)
-        config_set_env("notification_preferences", new_pref)
-    elif choice == "5":
-        new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
-        console.print(f"[green]Visual theme set to {new_theme}![/green]")
-    elif choice == "6":
-        new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit))
-        config_set_env("battery_limit", new_limit)
-    else:
-        console.print("[yellow]No configurations modified.[/yellow]")
-        return
+        choice = typer.prompt("Select an option to edit (1-7)", default="7")
+        if choice == "1":
+            new_val = typer.prompt("Enter new User Name", default=config.user_name)
+            config_set_env("user_name", new_val)
+        elif choice == "2":
+            new_val = typer.prompt("Enter new Assistant Name", default=config.assistant_name)
+            config_set_env("assistant_name", new_val)
+        elif choice == "3":
+            new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini)", default=config.default_provider)
+            config_set_env("default_provider", new_provider)
+            if new_provider != "mock":
+                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", password=True)
+                if new_key:
+                    config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
+        elif choice == "4":
+            new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences)
+            config_set_env("notification_preferences", new_pref)
+        elif choice == "5":
+            new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
+            console.print(f"[green]Visual theme set to {new_theme}![/green]")
+        elif choice == "6":
+            new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit))
+            config_set_env("battery_limit", new_limit)
+        elif choice == "7":
+            console.print("[yellow]Exiting settings menu.[/yellow]")
+            break
+        else:
+            console.print("[yellow]Invalid option or exit selected.[/yellow]")
+            break
 
 @app.command()
 def backup():

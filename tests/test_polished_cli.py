@@ -57,3 +57,14 @@ def test_check_github_upgrade(mock_get):
         check_github_upgrade()
         printed_texts = "".join([call[0][0] for call in mock_print.call_args_list if isinstance(call[0][0], str)])
         assert "A newer version of Shadow OS is available" in printed_texts
+
+def test_settings_command_exit():
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "Exiting settings menu" in result.stdout
+
+def test_settings_command_update_and_exit():
+    result = runner.invoke(app, ["settings"], input="1\nPaletteTestUser\n7\n")
+    assert result.exit_code == 0
+    assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
