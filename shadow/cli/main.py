@@ -459,8 +459,7 @@ def run_conversational_repl():
     console.print(f" • Current Reasoning Brain: [bold magenta]{config.default_provider.upper()}[/bold magenta]\n")
     console.print("[italic]What should we work on today?[/italic]\n")
 
-    from shadow.core.runtime import conversation_engine
-    from shadow.goals.generator import TaskGenerator
+    from shadow.core.runtime.runtime import shadow_runtime
     import asyncio
 
     while True:
@@ -479,36 +478,9 @@ def run_conversational_repl():
 
         console.print(f"\n[bold magenta]{config.assistant_name}[/bold magenta]\n")
 
-        # Check if the user wants to build or plan something
-        action_keywords = ["build", "create", "plan", "code", "run", "setup", "generate", "implement"]
-        if any(kw in user_input.lower() for kw in action_keywords):
-            console.print("[bold yellow]Planning...[/bold yellow]")
-            time.sleep(0.5)
-            console.print("[green]✓[/green] Reading repository")
-            time.sleep(0.4)
-            console.print("[green]✓[/green] Inspecting architecture")
-            time.sleep(0.4)
-            console.print("[green]✓[/green] Creating implementation plan")
-            time.sleep(0.4)
-            console.print("[green]✓[/green] Prioritizing tasks")
-            time.sleep(0.3)
-            console.print("[bold green]Done.[/bold green]\n")
-
-            generator = TaskGenerator(provider_name=config.default_provider)
-            tasks = asyncio.run(generator.generate_tasks_from_natural_language(user_input))
-
-            if tasks:
-                console.print(f"I have successfully created and prioritized [bold green]{len(tasks)}[/bold green] subtasks inside the action queue.")
-                for t in tasks:
-                    console.print(f" - [bold]{t.get('title')}[/bold]: {t.get('description')} (Safety: Level {t.get('safety_level')})")
-                console.print("\nWould you like me to begin autonomous execution of these tasks? Type 'yes' or let me know what to do next.")
-            else:
-                reply = asyncio.run(conversation_engine.chat(user_input))
-                console.print(reply)
-        else:
-            # Regular natural language chat
-            reply = asyncio.run(conversation_engine.chat(user_input))
-            console.print(reply)
+        # Process the request through our unified Autonomous OS Agent Runtime
+        reply = asyncio.run(shadow_runtime.process_user_request(user_input))
+        console.print(reply)
         console.print()
 
 # --- Entrypoint callback ---
@@ -969,20 +941,29 @@ def tasks():
     console.print(table)
 
 @app.command()
-def execute(task_id: int):
+def execute(
+    query_or_id: str = typer.Argument(..., help="Task ID (integer) or raw natural language execution query")
+):
     """
-    Trigger execution of a specific task.
+    Trigger execution of a specific task or process a raw natural language query autonomously.
     """
-    console.print(f"[yellow]Triggering execution for Task #{task_id}...[/yellow]")
-    res = asyncio.run(execution_engine.execute_task(task_id))
-    if res.get("success"):
-        console.print(f"[green]Task #{task_id} completed successfully![/green]")
-        console.print(res.get("result"))
-    else:
-        if res.get("status") == "pending_approval":
-            console.print(f"[bold yellow]Task #{task_id} is on hold. Requires approval via 'shadow approvals'![/bold yellow]")
+    if query_or_id.isdigit():
+        task_id = int(query_or_id)
+        console.print(f"[yellow]Triggering execution for Task #{task_id}...[/yellow]")
+        res = asyncio.run(execution_engine.execute_task(task_id))
+        if res.get("success"):
+            console.print(f"[green]Task #{task_id} completed successfully![/green]")
+            console.print(res.get("result"))
         else:
-            console.print(f"[red]Task #{task_id} failed: {res.get('error')}[/red]")
+            if res.get("status") == "pending_approval":
+                console.print(f"[bold yellow]Task #{task_id} is on hold. Requires approval via 'shadow approvals'![/bold yellow]")
+            else:
+                console.print(f"[red]Task #{task_id} failed: {res.get('error')}[/red]")
+    else:
+        from shadow.core.runtime.runtime import shadow_runtime
+        console.print(f"[yellow]Triggering execution for request: '{query_or_id}'...[/yellow]")
+        reply = asyncio.run(shadow_runtime.process_user_request(query_or_id))
+        console.print(reply)
 
 @app.command()
 def approvals():
@@ -2239,10 +2220,10 @@ def diagnostics():
 
 @app.command()
 def runtime(
-    action: Optional[str] = typer.Argument(None, help="Action to perform: status, start, stop")
+    action: Optional[str] = typer.Argument(None, help="Action to perform: status, start, stop, metrics")
 ):
     """
-    View and control the autonomous background reasoning loop runtime.
+    View and control the autonomous background reasoning loop runtime and execution engine.
     """
     if not action or action == "status":
         info = read_daemon_info()
@@ -2250,14 +2231,151 @@ def runtime(
             console.print("Autonomous Runtime: [green]ONLINE & ACTIVE (Running inside background daemon)[/green]")
         else:
             console.print("Autonomous Runtime: [red]OFFLINE[/red]")
+
+        # Also print execution state
+        from shadow.core.runtime.runtime import shadow_runtime
+        metrics = shadow_runtime.get_metrics()
+        console.print(f"Execution Engine State: [bold yellow]{metrics['current_state']}[/bold yellow]")
+        console.print(f"Status: [cyan]{metrics['status']}[/cyan]")
     elif action == "start":
         console.print("[green]Starting autonomous runtime...[/green]")
         daemon_start()
     elif action == "stop":
         console.print("[yellow]Stopping autonomous runtime...[/yellow]")
         daemon_stop()
+    elif action == "metrics":
+        from shadow.core.runtime.runtime import shadow_runtime
+        metrics = shadow_runtime.get_metrics()
+        console.print("[bold cyan]=== Runtime Metrics ===[/bold cyan]")
+        console.print(f"Current State: {metrics['current_state']}")
+        console.print(f"Status:        {metrics['status']}")
+        console.print(f"Running Tasks: {metrics['running_tasks']}")
+        console.print(f"Selected:      {', '.join(metrics['selected_providers'])}")
     else:
-        console.print(f"[red]Unknown action: {action}. Choose from: status, start, stop.[/red]")
+        console.print(f"[red]Unknown action: {action}. Choose from: status, start, stop, metrics.[/red]")
+
+@app.command()
+def queue():
+    """
+    List currently queued tasks in the autonomous agent runtime action queue.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority_score DESC")
+    all_tasks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not all_tasks:
+        console.print("[yellow]No pending tasks in execution queue.[/yellow]")
+        return
+
+    table = Table(title="Shadow Runtime Task Queue (Pending)")
+    table.add_column("ID", style="dim")
+    table.add_column("Title", style="bold green")
+    table.add_column("Priority Score", style="bold yellow")
+    table.add_column("Safety Level", style="cyan")
+    table.add_column("Status")
+
+    for t in all_tasks:
+        table.add_row(str(t["id"]), t["title"], f"{t['priority_score']:.2f}", f"L{t['safety_level']}", t["status"])
+
+    console.print(table)
+
+@app.command()
+def progress():
+    """
+    Query live progress steps and active status from the execution engine.
+    """
+    from shadow.core.runtime.runtime import shadow_runtime
+    metrics = shadow_runtime.get_metrics()
+    console.print(f"[bold]Active Status:[/bold] [cyan]{metrics['status']}[/cyan]\n")
+
+    steps = metrics.get("progress_steps", [])
+    if not steps:
+        console.print("[yellow]No active progress logs found.[/yellow]")
+        return
+
+    table = Table(title="Runtime Progress Tracker")
+    table.add_column("Step Name", style="bold green")
+    table.add_column("Status", style="cyan")
+    table.add_column("Message", style="magenta")
+    table.add_column("Duration (s)", style="yellow")
+
+    for step in steps:
+        duration_str = f"{step['duration']:.2f}" if step['duration'] else "N/A"
+        table.add_row(step["name"], step["status"], step["message"], duration_str)
+
+    console.print(table)
+
+@app.command()
+def cancel():
+    """
+    Cancel any active task execution or background job.
+    """
+    from shadow.core.runtime.runtime import shadow_runtime
+    from shadow.core.runtime.state_machine import RuntimeState
+    shadow_runtime.execution_engine.state_machine.transition_to(RuntimeState.CANCELLED, "CLI manually cancelled")
+    console.print("[green]✓ Active execution runtime has been transitioned to CANCELLED state.[/green]")
+
+@app.command()
+def resume():
+    """
+    Resume execution of tasks or the autonomous loop.
+    """
+    from shadow.core.runtime.runtime import shadow_runtime
+    from shadow.core.runtime.state_machine import RuntimeState
+    shadow_runtime.execution_engine.state_machine.transition_to(RuntimeState.RESUMED, "CLI manually resumed")
+    console.print("[green]✓ Active execution runtime has been transitioned to RESUMED state.[/green]")
+
+@app.command()
+def retry():
+    """
+    Trigger execution retry for the last failed or cancelled task.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title FROM tasks WHERE status IN ('failed', 'cancelled', 'pending') ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        console.print("[yellow]No failed, cancelled, or pending tasks found to retry.[/yellow]")
+        return
+
+    task_id = row["id"]
+    console.print(f"[yellow]Retrying execution for Task #{task_id}: '{row['title']}'...[/yellow]")
+    res = asyncio.run(execution_engine.execute_task(task_id))
+    if res.get("success"):
+        console.print(f"[green]✓ Task #{task_id} successfully executed on retry![/green]")
+    else:
+        console.print(f"[red]✗ Retry failed: {res.get('error')}[/red]")
+
+@app.command()
+def workflow(
+    query: Optional[str] = typer.Argument(None, help="Query request to predict workflow for")
+):
+    """
+    View active workflow selector states or predict routing for a given query request.
+    """
+    from shadow.core.runtime.runtime import shadow_runtime
+    if not query:
+        console.print("Active Workflow Engine is ready and [green]ONLINE[/green].")
+        return
+
+    classification = asyncio.run(shadow_runtime.intent_router.classify_intent(query))
+    workflow_type = shadow_runtime.workflow_selector.select_workflow(query, classification)
+    console.print(f"Request: \"{query}\"")
+    console.print(f"Predicted Intent: [bold green]{classification['intent'].value}[/bold green] (Confidence: {classification['confidence']:.2f})")
+    console.print(f"Selected Workflow: [bold yellow]{workflow_type.value}[/bold yellow]")
+
+@app.command()
+def state():
+    """
+    Query the state machine's current runtime state.
+    """
+    from shadow.core.runtime.runtime import shadow_runtime
+    metrics = shadow_runtime.get_metrics()
+    console.print(f"Current State Machine State: [bold yellow]{metrics['current_state']}[/bold yellow]")
 
 @app.command()
 def telegram(
