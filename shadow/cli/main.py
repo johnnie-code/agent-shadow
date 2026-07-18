@@ -1813,32 +1813,21 @@ def run_self_update_process():
     console.print("[*] Detecting and installing correct dependency profile...")
     logger.log_event("dependency_install", "Detecting platform and installing dependency profile")
     try:
-        from shadow.core.config import detect_platform
+        from shadow.core.dependencies import choose_and_validate_profile, install_compatible_profile, detect_platform
         plat = detect_platform()
-        is_android = "Android" in plat
-
         use_uv = shutil.which("uv") is not None
-        pip_bin = os.path.join(venv_dir, "bin", "pip") if os.path.exists(os.path.join(venv_dir, "bin", "pip")) else "pip"
         python_bin = sys.executable
 
-        if is_android:
-            console.print(f"[yellow]Detected Android Platform ({plat}). Applying Android compatible dependency profile (Pydantic v1)...[/yellow]")
-            logger.log_event("dependency_install", "Installing Android dependency profile (Pydantic v1)")
-            if use_uv:
-                subprocess.run(["uv", "pip", "install", "--python", python_bin, "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
-                subprocess.run(["uv", "pip", "install", "--python", python_bin, "--no-deps", "-e", "."], cwd=repo_dir, check=True)
-            else:
-                subprocess.run([pip_bin, "install", "--upgrade", "pip"], check=True)
-                subprocess.run([pip_bin, "install", "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
-                subprocess.run([pip_bin, "install", "--no-deps", "-e", "."], cwd=repo_dir, check=True)
-        else:
-            console.print(f"[green]Detected Desktop Platform ({plat}). Applying Desktop profile (Pydantic v2)...[/green]")
-            logger.log_event("dependency_install", "Installing Desktop dependency profile (Pydantic v2)")
-            if use_uv:
-                subprocess.run(["uv", "pip", "install", "--python", python_bin, "-e", "."], cwd=repo_dir, check=True)
-            else:
-                subprocess.run([pip_bin, "install", "--upgrade", "pip"], check=True)
-                subprocess.run([pip_bin, "install", "-e", "."], cwd=repo_dir, check=True)
+        # 1. Choose and validate profile first (validates compatibility before installation, aborts if unsupported)
+        profile, diagnostic = choose_and_validate_profile(python_bin=python_bin, use_uv=use_uv)
+        console.print(f"[green]✔ Compatibility validated: {diagnostic}[/green]")
+        logger.log_event("dependency_install", f"Compatibility validated: {diagnostic}")
+
+        # 2. Run installation
+        console.print(f"[*] Applying dependency profile: {profile['name']}...")
+        logger.log_event("dependency_install", f"Installing {profile['name']} dependency profile")
+
+        install_compatible_profile(python_bin=python_bin, use_uv=use_uv)
 
         logger.log_event("dependency_install", "Dependency profile installation completed successfully")
         console.print("[green][✓] Python dependency profile updated successfully.[/green]")
@@ -1986,48 +1975,46 @@ def doctor(repair: bool = typer.Option(True, help="Automatically attempt to repa
             console.print("[green][✓] Directory read/write permissions verified.[/green]")
 
     # 3. Dependency Check (Auto-heals based on platform profile)
-    import pydantic
-    from shadow.core.config import get_dependency_profile
-    profile = get_dependency_profile()
-    is_fallback = profile == "Android"
-
-    dependencies = ["pydantic", "yaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "dotenv"]
-    if not is_fallback:
-        dependencies.append("pydantic_settings")
+    from shadow.core.dependencies import choose_and_validate_profile, install_compatible_profile
+    try:
+        profile, diagnostic = choose_and_validate_profile(sys.executable)
+        profile_name = profile["name"]
+    except Exception as e:
+        profile = None
+        profile_name = "None"
+        diagnostic = str(e)
 
     missing_deps = []
-    for dep in dependencies:
-        try:
-            if dep == "dotenv":
-                import dotenv
-            else:
-                __import__(dep)
-        except ImportError:
-            missing_deps.append(dep)
+    if profile:
+        for dep in profile["dependencies"]:
+            # Extract package name (e.g. pydantic from pydantic==2.13.4, remove version specifiers)
+            pkg_name = dep.split("==")[0].split("<")[0].split(">")[0].split("=")[0].strip()
+            import_name = pkg_name
+            if pkg_name == "python-dotenv":
+                import_name = "dotenv"
+            elif pkg_name == "pyyaml":
+                import_name = "yaml"
+            elif pkg_name == "pydantic-settings":
+                import_name = "pydantic_settings"
 
-    if not missing_deps:
-        console.print(f"[green][✓] Dependencies verified ({profile} profile).[/green]")
+            try:
+                __import__(import_name)
+            except ImportError:
+                missing_deps.append(pkg_name)
+
+    if profile and not missing_deps:
+        console.print(f"[green][✓] Dependencies verified ({profile_name} profile: {diagnostic}).[/green]")
     else:
-        console.print(f"[red][x] Missing dependencies: {', '.join(missing_deps)}[/red]")
+        if not profile:
+            console.print(f"[red][x] Dependency profile selection/compatibility failed: {diagnostic}[/red]")
+        else:
+            console.print(f"[red][x] Missing dependencies: {', '.join(missing_deps)}[/red]")
         all_ok = False
         if repair:
-            console.print(f"[yellow]Auto-repairing: Installing missing dependencies for profile: {profile}...[/yellow]")
+            console.print(f"[yellow]Auto-repairing: Installing missing dependencies for profile: {profile_name}...[/yellow]")
             try:
-                repo_dir = get_repo_dir() or "."
                 use_uv = shutil.which("uv") is not None
-                python_bin = sys.executable
-                if is_android:
-                    if use_uv:
-                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
-                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "--no-deps", "-e", "."], cwd=repo_dir, check=True)
-                    else:
-                        subprocess.run([sys.executable, "-m", "pip", "install", "pyyaml", "fastapi", "uvicorn", "rich", "watchdog", "httpx", "typer", "click", "python-dotenv", "pydantic<2"], check=True)
-                        subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", "-e", "."], cwd=repo_dir, check=True)
-                else:
-                    if use_uv:
-                        subprocess.run(["uv", "pip", "install", "--python", python_bin, "-e", "."], cwd=repo_dir, check=True)
-                    else:
-                        subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."], cwd=repo_dir, check=True)
+                install_compatible_profile(sys.executable, use_uv)
                 console.print("[green][✓] Auto-reinstalled missing packages successfully.[/green]")
             except Exception as e:
                 console.print(f"[red][x] Auto-repair of dependencies failed: {e}[/red]")
