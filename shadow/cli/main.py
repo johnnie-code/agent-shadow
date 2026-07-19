@@ -894,20 +894,32 @@ def settings():
             new_val = typer.prompt("Enter new Assistant Name", default=config.assistant_name)
             config_set_env("assistant_name", new_val)
         elif choice == "3":
-            new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini)", default=config.default_provider)
+            while True:
+                new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini/ollama)", default=config.default_provider).strip().lower()
+                if new_provider in ["mock", "openai", "anthropic", "gemini", "ollama"]:
+                    break
+                console.print("[red]Invalid AI Provider. Please enter one of: mock, openai, anthropic, gemini, ollama.[/red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", password=True)
+                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key (leave empty to skip)", default="", hide_input=True)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":
-            new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences)
+            while True:
+                new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences).strip().lower()
+                if new_pref in ["terminal", "android", "none"]:
+                    break
+                console.print("[red]Invalid Notification Mode. Please enter one of: terminal, android, none.[/red]")
             config_set_env("notification_preferences", new_pref)
         elif choice == "5":
             new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
             console.print(f"[green]Visual theme set to {new_theme}![/green]")
         elif choice == "6":
-            new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit))
+            while True:
+                new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit)).strip()
+                if new_limit.isdigit() and 0 <= int(new_limit) <= 100:
+                    break
+                console.print("[red]Invalid Battery Saver Limit. Please enter a positive integer between 0 and 100.[/red]")
             config_set_env("battery_limit", new_limit)
         elif choice == "7":
             console.print("[yellow]Exiting settings menu.[/yellow]")
