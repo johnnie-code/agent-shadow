@@ -45,24 +45,24 @@ object ShadowRuntimeBridge {
             }
             val py = Python.getInstance()
             val mainModule = py.getModule("shadow.cli.main")
-            val outputStream = py.getModule("io").callAttr("StringIO")
+            val outputStream = py.getModule("io")?.callAttr("StringIO")
 
             // Redirect sys.stdout to capture rich output formats
             val sys = py.getModule("sys")
-            val oldStdout = sys.get("stdout")
-            sys.set("stdout", outputStream)
+            val oldStdout = sys?.get("stdout")
+            sys?.set("stdout", outputStream)
 
             try {
                 // Invoking Shadow's command line entries
-                val app = mainModule.get("app")
+                val app = mainModule?.get("app")
                 val cmdArgs = mutableListOf(cmd)
                 cmdArgs.addAll(args)
-                app.callAttr("main", cmdArgs.toTypedArray())
+                app?.callAttr("main", cmdArgs.toTypedArray())
             } finally {
-                sys.set("stdout", oldStdout)
+                sys?.set("stdout", oldStdout)
             }
 
-            return@withContext outputStream.callAttr("getvalue").toString()
+            return@withContext outputStream?.callAttr("getvalue").toString()
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Python CLI command directly: ${e.message}")
             return@withContext getSimulatedResponse(cmd, args)
@@ -119,16 +119,16 @@ object ShadowRuntimeBridge {
             }
             val py = Python.getInstance()
             val scannerModule = py.getModule("shadow.core.capabilities")
-            val scanner = scannerModule.get("capability_scanner")
+            val scanner = scannerModule?.get("capability_scanner")
 
             // Runs scanner.scan_all() which returns the live dictionary
-            val loop = py.getModule("asyncio").callAttr("get_event_loop")
-            val future = scanner.callAttr("scan_all", true)
-            val report = loop.callAttr("run_until_complete", future)
+            val loop = py.getModule("asyncio")?.callAttr("get_event_loop")
+            val future = scanner?.callAttr("scan_all", true)
+            val report = loop?.callAttr("run_until_complete", future)
 
             // Serialize to JSON
             val jsonModule = py.getModule("json")
-            return@withContext jsonModule.callAttr("dumps", report).toString()
+            return@withContext jsonModule?.callAttr("dumps", report).toString()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to scan live capabilities dynamically: ${e.message}")
             return@withContext getSimulatedQueryResponse("SELECT * FROM capabilities")
@@ -145,22 +145,22 @@ object ShadowRuntimeBridge {
             }
             val py = Python.getInstance()
             val mgrModule = py.getModule("shadow.providers.manager")
-            val providerManager = mgrModule.get("provider_manager")
-            val listProv = providerManager.callAttr("list_registered_providers")
+            val providerManager = mgrModule?.get("provider_manager")
+            val listProv = providerManager?.callAttr("list_registered_providers")
 
             val jsonList = JSONArray()
-            val len = listProv.callAttr("__len__").toInt()
+            val len = listProv?.callAttr("__len__")?.toInt() ?: 0
             for (i in 0 until len) {
-                val name = listProv.callAttr("__getitem__", i).toString()
-                val provObj = providerManager.callAttr("get_provider", name)
-                val isDefault = name == providerManager.get("_default_provider_name").toString()
+                val name = listProv?.callAttr("__getitem__", i).toString()
+                val provObj = providerManager?.callAttr("get_provider", name)
+                val isDefault = name == providerManager?.get("_default_provider_name").toString()
 
                 val item = JSONObject().apply {
                     put("name", name)
-                    put("class", provObj.getClass().name)
+                    put("class", provObj?.javaClass?.name ?: "Unknown")
                     put("is_default", isDefault)
-                    put("supports_tools", provObj.callAttr("supports_tools").toBoolean())
-                    put("supports_streaming", provObj.callAttr("supports_streaming").toBoolean())
+                    put("supports_tools", provObj?.callAttr("supports_tools")?.toBoolean() ?: false)
+                    put("supports_streaming", provObj?.callAttr("supports_streaming")?.toBoolean() ?: false)
                 }
                 jsonList.put(item)
             }
@@ -181,18 +181,18 @@ object ShadowRuntimeBridge {
             }
             val py = Python.getInstance()
             val mgrModule = py.getModule("shadow.providers.manager")
-            val providerManager = mgrModule.get("provider_manager")
+            val providerManager = mgrModule?.get("provider_manager")
 
-            val loop = py.getModule("asyncio").callAttr("get_event_loop")
-            val messages = py.getModule("builtins").callAttr("list")
-            val msgDict = py.getModule("builtins").callAttr("dict")
-            msgDict.callAttr("__setitem__", "role", "user")
-            msgDict.callAttr("__setitem__", "content", userMessage)
-            messages.callAttr("append", msgDict)
+            val loop = py.getModule("asyncio")?.callAttr("get_event_loop")
+            val messages = py.getModule("builtins")?.callAttr("list")
+            val msgDict = py.getModule("builtins")?.callAttr("dict")
+            msgDict?.callAttr("__setitem__", "role", "user")
+            msgDict?.callAttr("__setitem__", "content", userMessage)
+            messages?.callAttr("append", msgDict)
 
-            val future = providerManager.callAttr("chat", messages)
-            val chatResult = loop.callAttr("run_until_complete", future)
-            return@withContext chatResult.callAttr("get", "content").toString()
+            val future = providerManager?.callAttr("chat", messages)
+            val chatResult = loop?.callAttr("run_until_complete", future)
+            return@withContext chatResult?.callAttr("get", "content").toString()
         } catch (e: Exception) {
             Log.e(TAG, "Conversational bridge chat request failed: ${e.message}")
             return@withContext "Conversational bridge error: ${e.localizedMessage}"

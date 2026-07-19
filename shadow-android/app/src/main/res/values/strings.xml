@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Shadow OS</string>
+    <string name="shortcut_chat_short_label">Quick Chat</string>
+    <string name="shortcut_task_short_label">New Task</string>
 </resources>

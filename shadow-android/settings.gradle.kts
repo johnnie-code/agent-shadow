@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ShadowOS"
-include ":app"
+include(":app")

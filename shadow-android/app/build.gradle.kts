@@ -8,6 +8,15 @@ android {
     namespace = "com.shadow.os"
     compileSdk = 34
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = "shadow123"
+            keyAlias = "shadow"
+            keyPassword = "shadow123"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.shadow.os"
         minSdk = 26
@@ -21,29 +30,14 @@ android {
         }
 
         ndk {
-            abiFilters("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-        }
-
-        python {
-            version = "3.12"
-            pip {
-                install("pydantic<2")
-                install("pyyaml")
-                install("fastapi")
-                install("uvicorn")
-                install("rich")
-                install("watchdog")
-                install("httpx")
-                install("typer")
-                install("click==8.1.8")
-                install("python-dotenv")
-            }
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -91,4 +85,22 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.12"
+        pip {
+            install("pydantic<2")
+            install("pyyaml")
+            install("fastapi")
+            install("uvicorn")
+            install("rich")
+            install("watchdog")
+            install("httpx")
+            install("typer")
+            install("click==8.1.8")
+            install("python-dotenv")
+        }
+    }
 }

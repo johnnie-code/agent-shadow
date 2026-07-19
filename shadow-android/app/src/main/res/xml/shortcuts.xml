@@ -4,7 +4,7 @@
         android:shortcutId="chat"
         android:enabled="true"
         android:icon="@drawable/ic_shortcut_chat"
-        android:shortcutShortLabel="Quick Chat">
+        android:shortcutShortLabel="@string/shortcut_chat_short_label">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.shadow.os"
@@ -15,7 +15,7 @@
         android:shortcutId="new_task"
         android:enabled="true"
         android:icon="@drawable/ic_shortcut_task"
-        android:shortcutShortLabel="New Task">
+        android:shortcutShortLabel="@string/shortcut_task_short_label">
         <intent
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.shadow.os"
