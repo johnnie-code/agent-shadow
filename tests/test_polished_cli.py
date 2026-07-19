@@ -68,3 +68,27 @@ def test_settings_command_update_and_exit():
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_command_ai_provider_validation():
+    local_runner = CliRunner()
+    # Input 3 (AI Provider), then invalid "invalid_provider", then valid "gemini", then skip api key, then exit (7)
+    result = local_runner.invoke(app, ["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
+    assert result.exit_code == 0
+    assert "Invalid AI Provider" in result.stdout
+    assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
+
+def test_settings_command_notification_validation():
+    local_runner = CliRunner()
+    # Input 4 (Notification Mode), then invalid "popup", then valid "none", then exit (7)
+    result = local_runner.invoke(app, ["settings"], input="4\npopup\nnone\n7\n")
+    assert result.exit_code == 0
+    assert "Invalid Notification Mode" in result.stdout
+    assert "Successfully updated 'notification_preferences' to 'none'" in result.stdout
+
+def test_settings_command_battery_validation():
+    local_runner = CliRunner()
+    # Input 6 (Battery Limit), then invalid "-5", then invalid "120", then invalid "abc", then valid "15", then exit (7)
+    result = local_runner.invoke(app, ["settings"], input="6\n-5\n120\nabc\n15\n7\n")
+    assert result.exit_code == 0
+    assert "Invalid Battery Saver Limit" in result.stdout
+    assert "Successfully updated 'battery_limit' to '15'" in result.stdout
