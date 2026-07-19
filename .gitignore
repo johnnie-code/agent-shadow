@@ -14,3 +14,14 @@ shadow.db-wal
 shadow.db-shm
 .DS_Store
 *.log
+
+# Gradle / Android build outputs
+.gradle/
+**/build/
+**/app/build/
+shadow-android/app/build/
+shadow-android/.gradle/
+
+# Keystores / signing keys
+*.keystore
+*.jks
