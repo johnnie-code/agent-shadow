@@ -68,3 +68,36 @@ def test_settings_command_update_and_exit():
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+@patch("getpass.getpass", return_value="")
+def test_settings_command_validation_loop(mock_getpass):
+    inputs = [
+        "3",            # Select Option 3: AI Provider
+        "custom_prov",  # Invalid provider choice (Rich Prompt should reject)
+        "ollama",       # Valid provider choice
+        "4",            # Select Option 4: Notification Mode
+        "custom_pref",  # Invalid preference choice (Rich Prompt should reject)
+        "none",         # Valid preference choice
+        "6",            # Select Option 6: Battery Saver Limit
+        "abc",          # Invalid non-integer limit
+        "120",          # Out of bounds limit (120 > 100)
+        "50",           # Valid limit
+        "7"             # Exit settings
+    ]
+    input_str = "\n".join(inputs) + "\n"
+    try:
+        result = runner.invoke(app, ["settings"], input=input_str)
+        assert result.exit_code == 0
+        assert "Please select one of the available options" in result.stdout
+        assert "Successfully updated 'default_provider' to 'ollama'" in result.stdout
+        assert "Successfully updated 'notification_preferences' to 'none'" in result.stdout
+        assert "Error: Please enter a valid integer." in result.stdout
+        assert "Error: Limit must be between 0 and 100." in result.stdout
+        assert "Successfully updated 'battery_limit' to '50'" in result.stdout
+        assert "Exiting settings menu" in result.stdout
+    finally:
+        # Clean up and reset modified configurations back to their original mock state
+        from shadow.cli.main import config_set_env
+        config_set_env("default_provider", "mock")
+        config_set_env("notification_preferences", "terminal")
+        config_set_env("battery_limit", "20")
