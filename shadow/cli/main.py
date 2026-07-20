@@ -875,6 +875,7 @@ def settings():
     """
     Interactively view and configure Shadow OS preferences and API keys in a loop.
     """
+    from rich.prompt import Prompt
     while True:
         config = get_config()
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
@@ -886,29 +887,48 @@ def settings():
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
         console.print("7. Exit Settings\n")
 
-        choice = typer.prompt("Select an option to edit (1-7)", default="7")
+        choice = Prompt.ask("Select an option to edit (1-7)", choices=["1", "2", "3", "4", "5", "6", "7"], default="7")
         if choice == "1":
-            new_val = typer.prompt("Enter new User Name", default=config.user_name)
+            new_val = Prompt.ask("Enter new User Name", default=config.user_name)
             config_set_env("user_name", new_val)
         elif choice == "2":
-            new_val = typer.prompt("Enter new Assistant Name", default=config.assistant_name)
+            new_val = Prompt.ask("Enter new Assistant Name", default=config.assistant_name)
             config_set_env("assistant_name", new_val)
         elif choice == "3":
-            new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini)", default=config.default_provider)
-            config_set_env("default_provider", new_provider)
+            while True:
+                new_provider = Prompt.ask("Enter AI Provider", choices=["mock", "openai", "anthropic", "gemini", "ollama"], default=config.default_provider)
+                if new_provider in ["mock", "openai", "anthropic", "gemini", "ollama"]:
+                    config_set_env("default_provider", new_provider)
+                    break
+                else:
+                    console.print("[red]Error: Invalid AI Provider. Choose from mock, openai, anthropic, gemini, ollama.[/red]")
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", password=True)
+                new_key = Prompt.ask(f"Enter {new_provider.upper()} API Key (press Enter to skip)", default='', password=True)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":
-            new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences)
-            config_set_env("notification_preferences", new_pref)
+            while True:
+                new_pref = Prompt.ask("Enter Notification Mode", choices=["terminal", "android", "none"], default=config.notification_preferences)
+                if new_pref in ["terminal", "android", "none"]:
+                    config_set_env("notification_preferences", new_pref)
+                    break
+                else:
+                    console.print("[red]Error: Invalid Notification Mode. Choose from terminal, android, none.[/red]")
         elif choice == "5":
-            new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
+            new_theme = Prompt.ask("Enter Visual Theme", choices=["standard", "light", "neon"], default="standard")
             console.print(f"[green]Visual theme set to {new_theme}![/green]")
         elif choice == "6":
-            new_limit = typer.prompt("Enter Battery Saver Limit %", default=str(config.battery_limit))
-            config_set_env("battery_limit", new_limit)
+            while True:
+                try:
+                    new_limit_str = Prompt.ask("Enter Battery Saver Limit % (0-100)", default=str(config.battery_limit))
+                    new_limit = int(new_limit_str)
+                    if 0 <= new_limit <= 100:
+                        config_set_env("battery_limit", str(new_limit))
+                        break
+                    else:
+                        console.print("[red]Error: Limit must be between 0 and 100.[/red]")
+                except ValueError:
+                    console.print("[red]Error: Please enter a valid integer.[/red]")
         elif choice == "7":
             console.print("[yellow]Exiting settings menu.[/yellow]")
             break
