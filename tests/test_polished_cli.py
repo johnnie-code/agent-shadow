@@ -6,6 +6,23 @@ from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
 
+@pytest.fixture(autouse=True)
+def backup_restore_env():
+    import shutil
+    env_file = os.path.join(SHADOW_HOME, "config", ".env")
+    backup_file = env_file + ".bak"
+    has_backup = False
+    if os.path.exists(env_file):
+        shutil.copy2(env_file, backup_file)
+        has_backup = True
+    yield
+    if has_backup:
+        shutil.move(backup_file, env_file)
+    elif os.path.exists(env_file):
+        os.remove(env_file)
+    from shadow.core.config import reset_config
+    reset_config(None)
+
 def test_version_command():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
@@ -67,4 +84,26 @@ def test_settings_command_update_and_exit():
     result = runner.invoke(app, ["settings"], input="1\nPaletteTestUser\n7\n")
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
+
+def test_settings_validation_provider():
+    result = runner.invoke(app, ["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
+    assert result.exit_code == 0
+    assert "Error: Invalid provider selected." in result.stdout
+    assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
+
+def test_settings_validation_notifications():
+    result = runner.invoke(app, ["settings"], input="4\ninvalid_mode\nnone\n7\n")
+    assert result.exit_code == 0
+    assert "Error: Invalid notification preferences." in result.stdout
+    assert "Successfully updated 'notification_preferences' to 'none'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
+
+def test_settings_validation_battery():
+    result = runner.invoke(app, ["settings"], input="6\nabc\n105\n15\n7\n")
+    assert result.exit_code == 0
+    assert "Error: Battery Saver Limit must be a valid integer." in result.stdout
+    assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
+    assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
