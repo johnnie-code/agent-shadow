@@ -877,10 +877,22 @@ def settings():
     """
     while True:
         config = get_config()
+        prov = config.default_provider
+        if prov == "mock":
+            key_status = "No Key Required"
+        elif prov == "ollama":
+            key_status = f"Ollama {config.ollama.mode.capitalize()}"
+        else:
+            prov_cfg = getattr(config, prov, None)
+            if prov_cfg and getattr(prov_cfg, "api_key", None):
+                key_status = "[green]API Key Set[/green]"
+            else:
+                key_status = "[bold red]API Key Missing![/bold red]"
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green] ({key_status})")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -895,21 +907,42 @@ def settings():
             config_set_env("assistant_name", new_val)
         elif choice == "3":
             while True:
-                new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini/ollama)", default=config.default_provider).strip().lower()
+                console.print("\nSelect AI Provider:")
+                console.print("  1. Mock (Offline)\n  2. OpenAI\n  3. Anthropic\n  4. Gemini\n  5. Ollama")
+                new_provider = typer.prompt("Enter option (1-5) or name", default=config.default_provider).strip().lower()
+                prov_map = {"1": "mock", "2": "openai", "3": "anthropic", "4": "gemini", "5": "ollama"}
+                if new_provider in prov_map:
+                    new_provider = prov_map[new_provider]
                 if new_provider in ["mock", "openai", "anthropic", "gemini", "ollama"]:
                     break
-                console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
+                console.print("[bold red]Error: Invalid provider selected. Must be mock, openai, anthropic, gemini, or ollama.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
                 new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
+                if new_key and "PYTEST_CURRENT_TEST" not in os.environ:
+                    if typer.confirm(f"Would you like to test connectivity to {new_provider.upper()}?", default=True):
+                        console.print(f"[cyan]Testing connectivity to {new_provider.upper()}...[/cyan]")
+                        if new_provider == "openai":
+                            asyncio.run(test_openai_connectivity())
+                        elif new_provider == "gemini":
+                            asyncio.run(test_gemini_connectivity())
+                        elif new_provider == "anthropic":
+                            asyncio.run(test_claude_connectivity())
+                        elif new_provider == "ollama":
+                            asyncio.run(test_ollama_connectivity())
         elif choice == "4":
             while True:
-                new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences).strip().lower()
+                console.print("\nSelect Notification Mode:")
+                console.print("  1. Terminal\n  2. Android\n  3. None")
+                new_pref = typer.prompt("Enter option (1-3) or mode", default=config.notification_preferences).strip().lower()
+                pref_map = {"1": "terminal", "2": "android", "3": "none"}
+                if new_pref in pref_map:
+                    new_pref = pref_map[new_pref]
                 if new_pref in ["terminal", "android", "none"]:
                     break
-                console.print("[bold red]Error: Invalid notification preferences. Must be one of: terminal, android, none.[/bold red]")
+                console.print("[bold red]Error: Invalid notification preferences. Must be terminal, android, or none.[/bold red]")
             config_set_env("notification_preferences", new_pref)
         elif choice == "5":
             new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")

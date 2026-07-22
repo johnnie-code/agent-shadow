@@ -107,3 +107,17 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_numbered_provider_selection():
+    # Selecting provider using numbered options (e.g. 4 for gemini)
+    result = runner.invoke(app, ["settings"], input="3\n4\n\n7\n")
+    assert result.exit_code == 0
+    assert "Select AI Provider:" in result.stdout
+    assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
+
+def test_settings_numbered_notification_selection():
+    # Selecting notification preference using numbered options (e.g. 3 for none)
+    result = runner.invoke(app, ["settings"], input="4\n3\n7\n")
+    assert result.exit_code == 0
+    assert "Select Notification Mode:" in result.stdout
+    assert "Successfully updated 'notification_preferences' to 'none'" in result.stdout
