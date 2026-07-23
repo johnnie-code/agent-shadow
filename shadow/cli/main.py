@@ -877,10 +877,23 @@ def settings():
     """
     while True:
         config = get_config()
+        p_status = ""
+        current_p = config.default_provider
+        if current_p == "openai":
+            p_status = " [green]✔ Key Set[/green]" if config.openai.api_key else " [yellow]⚠ Key Missing[/yellow]"
+        elif current_p == "anthropic":
+            p_status = " [green]✔ Key Set[/green]" if config.anthropic.api_key else " [yellow]⚠ Key Missing[/yellow]"
+        elif current_p == "gemini":
+            p_status = " [green]✔ Key Set[/green]" if config.gemini.api_key else " [yellow]⚠ Key Missing[/yellow]"
+        elif current_p == "ollama":
+            p_status = " [green]✔ Key Set[/green]" if config.ollama.api_key else (" [green]✔ Local[/green]" if config.ollama.mode == "local" else " [yellow]⚠ Key Missing[/yellow]")
+        elif current_p == "mock":
+            p_status = " [dim](Offline - No Key Needed)[/dim]"
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]{p_status}")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -895,21 +908,36 @@ def settings():
             config_set_env("assistant_name", new_val)
         elif choice == "3":
             while True:
-                new_provider = typer.prompt("Enter AI Provider (mock/openai/anthropic/gemini/ollama)", default=config.default_provider).strip().lower()
-                if new_provider in ["mock", "openai", "anthropic", "gemini", "ollama"]:
+                new_provider_input = typer.prompt("Enter AI Provider (1.mock/2.openai/3.anthropic/4.gemini/5.ollama)", default=config.default_provider).strip().lower()
+                pmap = {"1": "mock", "2": "openai", "3": "anthropic", "4": "gemini", "5": "ollama"}
+                new_provider = pmap.get(new_provider_input, new_provider_input)
+                if new_provider in pmap.values():
                     break
-                console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
+                console.print("[bold red]Error: Invalid provider selected. Use 1-5 or the provider name.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
                 new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
+                    if typer.confirm("Would you like to test connection now?", default=True):
+                        console.print(f"[cyan]Testing {new_provider.upper()}...[/cyan]")
+                        if new_provider == "openai":
+                            asyncio.run(test_openai_connectivity())
+                        elif new_provider == "gemini":
+                            asyncio.run(test_gemini_connectivity())
+                        elif new_provider == "anthropic":
+                            asyncio.run(test_claude_connectivity())
+                        elif new_provider == "ollama":
+                            config = get_config()
+                            asyncio.run(test_ollama_cloud_connectivity() if config.ollama.mode == "cloud" else test_ollama_connectivity())
         elif choice == "4":
             while True:
-                new_pref = typer.prompt("Enter Notification Mode (terminal/android/none)", default=config.notification_preferences).strip().lower()
-                if new_pref in ["terminal", "android", "none"]:
+                new_pref_input = typer.prompt("Enter Notification Mode (1.terminal/2.android/3.none)", default=config.notification_preferences).strip().lower()
+                nmap = {"1": "terminal", "2": "android", "3": "none"}
+                new_pref = nmap.get(new_pref_input, new_pref_input)
+                if new_pref in nmap.values():
                     break
-                console.print("[bold red]Error: Invalid notification preferences. Must be one of: terminal, android, none.[/bold red]")
+                console.print("[bold red]Error: Invalid notification preferences. Use 1-3 or mode name.[/bold red]")
             config_set_env("notification_preferences", new_pref)
         elif choice == "5":
             new_theme = typer.prompt("Enter Visual Theme (standard/light/neon)", default="standard")
