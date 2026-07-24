@@ -107,3 +107,30 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_numbered_shortcuts():
+    # Input sequence:
+    # 3: select provider
+    # 1: Gemini (shortcut)
+    # \n: keep key empty
+    # 4: select notifications
+    # 2: Android notifications (shortcut)
+    # 7: exit
+    result = runner.invoke(app, ["settings"], input="3\n1\n\n4\n2\n7\n")
+    assert result.exit_code == 0
+    assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
+    assert "Successfully updated 'notification_preferences' to 'android'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
+
+def test_settings_option_8_connectivity_test():
+    # Input sequence:
+    # 3: select provider
+    # 5: Mock (shortcut)
+    # 8: test connectivity
+    # 7: exit
+    result = runner.invoke(app, ["settings"], input="3\n5\n8\n7\n")
+    assert result.exit_code == 0
+    assert "Successfully updated 'default_provider' to 'mock'" in result.stdout
+    assert "Testing connectivity to MOCK..." in result.stdout
+    assert "Mock: Connected" in result.stdout
+    assert "Exiting settings menu" in result.stdout
