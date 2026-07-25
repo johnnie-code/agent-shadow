@@ -107,3 +107,23 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_key_presence_indicator():
+    from shadow.core.config import get_config
+    cfg = get_config()
+    orig_provider = cfg.default_provider
+    orig_key = cfg.gemini.api_key
+    try:
+        # Mock provider 'gemini' and set key to None (Key Missing)
+        cfg.default_provider = "gemini"
+        cfg.gemini.api_key = None
+        result = runner.invoke(app, ["settings"], input="7\n")
+        assert "(Key Missing)" in result.stdout
+
+        # Mock provider 'gemini' and set key (Key Set)
+        cfg.gemini.api_key = "dummy-api-key"
+        result2 = runner.invoke(app, ["settings"], input="7\n")
+        assert "(Key Set)" in result2.stdout
+    finally:
+        cfg.default_provider = orig_provider
+        cfg.gemini.api_key = orig_key
