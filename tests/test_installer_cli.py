@@ -4,8 +4,6 @@ import pytest
 import subprocess
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
-from shadow.cli.main import app
-from shadow.core.database import init_db
 from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
@@ -13,10 +11,12 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def setup_test_db():
     from shadow.core.config import reset_config
+    from shadow.core.database import init_db
     reset_config(None)
     init_db()
 
 def test_doctor_command():
+    from shadow.cli.main import app
     from shadow.core.config import reset_config
     reset_config(None)
     # Test shadow doctor execution
@@ -26,6 +26,7 @@ def test_doctor_command():
     assert "Shadow Doctor: All diagnostic checks passed" in result.stdout or "Completed checks" in result.stdout
 
 def test_doctor_missing_mission():
+    from shadow.cli.main import app
     # Test doctor with missing mission.md (auto repairs/creates it)
     mission_path = os.path.join(SHADOW_HOME, "mission.md")
     if os.path.exists(mission_path):
@@ -46,6 +47,7 @@ def test_doctor_missing_mission():
 
 @patch("subprocess.run")
 def test_update_success(mock_run):
+    from shadow.cli.main import app
     # Mock subprocess.run for git pull, pip/uv install, pytest to return 0/success
     mock_run.return_value = MagicMock(returncode=0, stdout="Success")
 
@@ -65,6 +67,7 @@ def test_update_success(mock_run):
 
 @patch("subprocess.run")
 def test_update_failure_and_rollback(mock_run):
+    from shadow.cli.main import app
     # Mock subprocess.run to fail on git pull or dependencies install
     # Let's make git pull fail (returncode=1)
     mock_run.return_value = MagicMock(returncode=1, stderr="Git pull conflict")
@@ -95,6 +98,7 @@ def test_update_failure_and_rollback(mock_run):
         assert mock_rollback.call_count == 1
 
 def test_uninstall_cancelled():
+    from shadow.cli.main import app
     # Test cancelling uninstall
     result = runner.invoke(app, ["uninstall"], input="n\n")
     assert result.exit_code == 0
@@ -104,6 +108,7 @@ def test_uninstall_cancelled():
 @patch("os.remove")
 @patch("os.path.exists")
 def test_uninstall_preserve_data(mock_exists, mock_remove, mock_rmtree):
+    from shadow.cli.main import app
     # Test uninstall and preserve user data
     mock_exists.side_effect = lambda path: True if "venv" in path else False
     result = runner.invoke(app, ["uninstall"], input="y\ny\n")
@@ -115,6 +120,7 @@ def test_uninstall_preserve_data(mock_exists, mock_remove, mock_rmtree):
 @patch("shutil.rmtree")
 @patch("os.remove")
 def test_uninstall_purge_data(mock_remove, mock_rmtree):
+    from shadow.cli.main import app
     # Test uninstall and remove/purge user data
     result = runner.invoke(app, ["uninstall"], input="y\nn\n")
     assert result.exit_code == 0

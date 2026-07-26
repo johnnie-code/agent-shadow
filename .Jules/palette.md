@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-07-26 - Configured Resource Presence Feedback UX
+**Learning:** Highlighting the presence of external system resources (such as active API credentials) in settings menus with instant visual feedback (like `(Key Set)` or `(Key Missing)`) prevents configuration confusion and improves setup accessibility without exposing sensitive keys to screen readers or logs.
+**Action:** Always complement preference summaries with dynamic, non-revealing presence indicators for any required credentials or external integrations.

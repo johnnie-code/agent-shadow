@@ -877,10 +877,25 @@ def settings():
     """
     while True:
         config = get_config()
+
+        # Calculate key presence indicator
+        provider = config.default_provider
+        key_indicator = ""
+        if provider == "mock":
+            key_indicator = " [dim](No key required)[/dim]"
+        elif provider == "openai":
+            key_indicator = " [green](Key Set)[/green]" if config.openai.api_key else " [bold red](Key Missing)[/bold red]"
+        elif provider == "anthropic":
+            key_indicator = " [green](Key Set)[/green]" if config.anthropic.api_key else " [bold red](Key Missing)[/bold red]"
+        elif provider == "gemini":
+            key_indicator = " [green](Key Set)[/green]" if config.gemini.api_key else " [bold red](Key Missing)[/bold red]"
+        elif provider == "ollama":
+            key_indicator = " [green](Key Set)[/green]" if config.ollama.api_key else " [dim](Optional Key)[/dim]"
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]{key_indicator}")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")

@@ -1,7 +1,6 @@
 import os
 import pytest
 from typer.testing import CliRunner
-from shadow.cli.main import app
 from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
@@ -24,6 +23,7 @@ def backup_restore_env():
     reset_config(None)
 
 def test_version_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert "Shadow OS" in result.stdout
@@ -31,21 +31,25 @@ def test_version_command():
     assert "Platform" in result.stdout
 
 def test_diagnostics_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["diagnostics"])
     assert result.exit_code == 0
     assert "Running Diagnostics" in result.stdout
 
 def test_repair_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["repair"])
     assert result.exit_code == 0
     assert "Shadow Auto-Repair" in result.stdout
 
 def test_runtime_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["runtime", "status"])
     assert result.exit_code == 0
     assert "Autonomous Runtime" in result.stdout
 
 def test_telegram_command_not_configured():
+    from shadow.cli.main import app
     from shadow.core.config import get_config
     cfg = get_config()
     orig_token = cfg.telegram_bot_token
@@ -57,6 +61,7 @@ def test_telegram_command_not_configured():
         cfg.telegram_bot_token = orig_token
 
 def test_config_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
 
@@ -76,24 +81,72 @@ def test_check_github_upgrade(mock_get):
         assert "A newer version of Shadow OS is available" in printed_texts
 
 def test_settings_command_exit():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="7\n")
     assert result.exit_code == 0
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_command_update_and_exit():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="1\nPaletteTestUser\n7\n")
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_provider():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid provider selected." in result.stdout
     assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
+def test_settings_key_presence_indicator_mock():
+    from shadow.cli.main import app
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "(No key required)" in result.stdout
+
+def test_settings_key_presence_indicator_gemini_missing():
+    # Force Gemini provider but keep API key empty/None
+    import shadow.cli.main
+    from shadow.cli.main import app
+    config = shadow.cli.main.get_config()
+    orig_provider = config.default_provider
+    orig_key = config.gemini.api_key
+    config.default_provider = "gemini"
+    config.gemini.api_key = None
+    original_reset_config = shadow.cli.main.get_config.__globals__["reset_config"]
+    try:
+        result = runner.invoke(app, ["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "(Key Missing)" in result.stdout
+    finally:
+        config.default_provider = orig_provider
+        config.gemini.api_key = orig_key
+        original_reset_config(None)
+
+def test_settings_key_presence_indicator_gemini_set():
+    # Force Gemini provider and configure API key
+    import shadow.cli.main
+    from shadow.cli.main import app
+    config = shadow.cli.main.get_config()
+    orig_provider = config.default_provider
+    orig_key = config.gemini.api_key
+    config.default_provider = "gemini"
+    config.gemini.api_key = "mock-api-key"
+    original_reset_config = shadow.cli.main.get_config.__globals__["reset_config"]
+    try:
+        result = runner.invoke(app, ["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "(Key Set)" in result.stdout
+    finally:
+        config.default_provider = orig_provider
+        config.gemini.api_key = orig_key
+        original_reset_config(None)
+
 def test_settings_validation_notifications():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="4\ninvalid_mode\nnone\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid notification preferences." in result.stdout
@@ -101,6 +154,7 @@ def test_settings_validation_notifications():
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_battery():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="6\nabc\n105\n15\n7\n")
     assert result.exit_code == 0
     assert "Error: Battery Saver Limit must be a valid integer." in result.stdout
