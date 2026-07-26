@@ -7,7 +7,6 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from shadow.core.config import SHADOW_HOME
 from shadow.core.update_logger import UpdateLogger, get_update_history
 from shadow.core.self_test import subsystem_runner, VerificationRunner, VerificationStep, VerificationResult
-from shadow.cli.main import run_self_update_process, doctor
 from rich.table import Table
 
 @pytest.fixture(autouse=True)
@@ -117,6 +116,7 @@ def test_successful_self_update_flow(
     mock_run_all.return_value = mock_report
 
     # Run the self update
+    from shadow.cli.main import run_self_update_process
     with patch("shutil.copy2") as mock_copy:
         run_self_update_process()
 
@@ -155,6 +155,7 @@ def test_failed_dependency_installation_rollback(
     mock_run.side_effect = mock_run_side_effect
 
     # Run self update (which should trigger dependency crash and rollback)
+    from shadow.cli.main import run_self_update_process
     with patch("shutil.copy2") as mock_copy:
         run_self_update_process()
 
@@ -203,6 +204,7 @@ def test_failed_verification_causes_rollback_and_snapshot(
     mock_run_all.return_value = mock_report
 
     # Run self update
+    from shadow.cli.main import run_self_update_process
     with patch("shutil.copy2") as mock_copy:
         run_self_update_process()
 
@@ -229,6 +231,7 @@ def test_failed_verification_causes_rollback_and_snapshot(
 
 @patch("shadow.core.self_test.subsystem_runner.run_all")
 def test_doctor_command_success(mock_run_all):
+    from shadow.cli.main import doctor
     mock_report = MagicMock()
     mock_report.success = True
 
