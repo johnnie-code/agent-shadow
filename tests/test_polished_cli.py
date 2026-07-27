@@ -15,7 +15,14 @@ def backup_restore_env():
     if os.path.exists(env_file):
         shutil.copy2(env_file, backup_file)
         has_backup = True
+    orig_env = {k: v for k, v in os.environ.items() if k.startswith("SHADOW_")}
     yield
+    for k in list(os.environ.keys()):
+        if k.startswith("SHADOW_"):
+            if k in orig_env:
+                os.environ[k] = orig_env[k]
+            else:
+                del os.environ[k]
     if has_backup:
         shutil.move(backup_file, env_file)
     elif os.path.exists(env_file):
@@ -107,3 +114,43 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_api_key_indicator_set():
+    # Set default provider to openai and set its api key
+    from shadow.cli.main import config_set_env
+    config_set_env("default_provider", "openai")
+    config_set_env("openai__api_key", "sk-12345")
+
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "openai (Key Set)" in result.stdout
+
+def test_settings_api_key_indicator_missing():
+    # Set default provider to openai and clear its api key
+    from shadow.cli.main import config_set_env
+    config_set_env("default_provider", "openai")
+
+    if "SHADOW_OPENAI__API_KEY" in os.environ:
+        del os.environ["SHADOW_OPENAI__API_KEY"]
+
+    env_file = os.path.join(SHADOW_HOME, "config", ".env")
+    if os.path.exists(env_file):
+        with open(env_file, "r") as f:
+            lines = [line for line in f if not "OPENAI__API_KEY" in line]
+        with open(env_file, "w") as f:
+            f.writelines(lines)
+
+    from shadow.core.config import reset_config
+    reset_config(None)
+
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "openai (Key Missing)" in result.stdout
+
+def test_settings_api_key_prompt_already_set():
+    from shadow.cli.main import config_set_env
+    config_set_env("openai__api_key", "sk-12345")
+
+    result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+    assert result.exit_code == 0
+    assert "already set, press Enter to keep current" in result.stdout
