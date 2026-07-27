@@ -848,6 +848,7 @@ def logs(limit: int = typer.Option(20, help="Number of recent logs to show.")):
 def config_set_env(key: str, value: str):
     env_file = os.path.join(SHADOW_HOME, "config", ".env")
     key_str = f"SHADOW_{key.upper()}"
+    os.environ[key_str] = value
     lines = []
     if os.path.exists(env_file):
         with open(env_file, "r") as f:
@@ -880,7 +881,17 @@ def settings():
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+
+        provider_name = config.default_provider
+        key_status = ""
+        if provider_name != "mock":
+            prov_cfg = getattr(config, provider_name, None)
+            if prov_cfg and getattr(prov_cfg, "api_key", None):
+                key_status = " [dim](Key Set)[/dim]"
+            else:
+                key_status = " [bold red](Key Missing)[/bold red]"
+
+        console.print(f"3. AI Provider:         [green]{config.default_provider}{key_status}[/green]")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -901,7 +912,12 @@ def settings():
                 console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
+                prov_cfg = getattr(config, new_provider, None)
+                has_key = prov_cfg and getattr(prov_cfg, "api_key", None)
+                prompt_msg = f"Enter {new_provider.upper()} API Key"
+                if has_key:
+                    prompt_msg += " [dim](already set, press Enter to keep current)[/dim]"
+                new_key = typer.prompt(prompt_msg, hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":
