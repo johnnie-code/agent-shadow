@@ -107,3 +107,32 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_key_indicators():
+    from shadow.core.config import get_config, reset_config
+    cfg = get_config()
+    orig_provider = cfg.default_provider
+    orig_openai_key = cfg.openai.api_key
+
+    try:
+        # Force default provider to openai and API key to missing first
+        cfg.default_provider = "openai"
+        cfg.openai.api_key = None
+
+        # Key should be missing
+        result = runner.invoke(app, ["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "(Key Missing)" in result.stdout
+
+        # Now set the API key in memory
+        cfg.openai.api_key = "sk-testkey123"
+
+        # Key should be set, and option 3 should show "(already set, press Enter to keep current)"
+        result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+        assert result.exit_code == 0
+        assert "(Key Set)" in result.stdout
+        assert "(already set, press Enter to keep current)" in result.stdout
+    finally:
+        cfg.default_provider = orig_provider
+        cfg.openai.api_key = orig_openai_key
+        reset_config(None)
