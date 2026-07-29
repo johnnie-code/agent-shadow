@@ -107,3 +107,21 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+
+def test_settings_key_indicator_and_prompt_ux():
+    # 1. Update the AI provider to openai and set its API key
+    result = runner.invoke(app, ["settings"], input="3\nopenai\nsk-1234567890\n7\n")
+    assert result.exit_code == 0
+    assert "Successfully updated 'default_provider' to 'openai'" in result.stdout
+    assert "Successfully updated 'OPENAI__API_KEY' to 'sk-1234567890'" in result.stdout
+
+    # 2. Re-enter settings to verify the (Key Set) indicator is displayed on the main menu
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "openai (Key Set)" in result.stdout
+
+    # 3. Choose option 3 again and verify the prompt alerts about the already set key
+    result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+    assert result.exit_code == 0
+    assert "already set, press Enter to keep current" in result.stdout
