@@ -877,10 +877,19 @@ def settings():
     """
     while True:
         config = get_config()
+        provider_display = config.default_provider
+        if config.default_provider != "mock":
+            prov_config = getattr(config, config.default_provider, None)
+            has_key = bool(prov_config and getattr(prov_config, "api_key", None))
+            key_status = "[green](Key Set)[/green]" if has_key else "[red](Key Missing)[/red]"
+            provider_display = f"{config.default_provider} {key_status}"
+        else:
+            provider_display = f"{config.default_provider} [dim](No key needed)[/dim]"
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{provider_display}[/green]")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -901,7 +910,12 @@ def settings():
                 console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
+                prov_config = getattr(config, new_provider, None)
+                has_existing_key = bool(prov_config and getattr(prov_config, "api_key", None))
+                prompt_msg = f"Enter {new_provider.upper()} API Key"
+                if has_existing_key:
+                    prompt_msg += " (already set, press Enter to keep current)"
+                new_key = typer.prompt(prompt_msg, hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":
