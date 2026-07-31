@@ -1,10 +1,13 @@
 import os
 import pytest
 from typer.testing import CliRunner
-from shadow.cli.main import app
 from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
+
+def run_cmd(*args, **kwargs):
+    from shadow.cli.main import app
+    return runner.invoke(app, *args, **kwargs)
 
 @pytest.fixture(autouse=True)
 def backup_restore_env():
@@ -24,24 +27,24 @@ def backup_restore_env():
     reset_config(None)
 
 def test_version_command():
-    result = runner.invoke(app, ["version"])
+    result = run_cmd(["version"])
     assert result.exit_code == 0
     assert "Shadow OS" in result.stdout
     assert "Version" in result.stdout
     assert "Platform" in result.stdout
 
 def test_diagnostics_command():
-    result = runner.invoke(app, ["diagnostics"])
+    result = run_cmd(["diagnostics"])
     assert result.exit_code == 0
     assert "Running Diagnostics" in result.stdout
 
 def test_repair_command():
-    result = runner.invoke(app, ["repair"])
+    result = run_cmd(["repair"])
     assert result.exit_code == 0
     assert "Shadow Auto-Repair" in result.stdout
 
 def test_runtime_command():
-    result = runner.invoke(app, ["runtime", "status"])
+    result = run_cmd(["runtime", "status"])
     assert result.exit_code == 0
     assert "Autonomous Runtime" in result.stdout
 
@@ -51,13 +54,13 @@ def test_telegram_command_not_configured():
     orig_token = cfg.telegram_bot_token
     cfg.telegram_bot_token = None
     try:
-        result = runner.invoke(app, ["telegram", "status"])
+        result = run_cmd(["telegram", "status"])
         assert "NOT CONFIGURED" in result.stdout
     finally:
         cfg.telegram_bot_token = orig_token
 
 def test_config_command():
-    result = runner.invoke(app, ["config"])
+    result = run_cmd(["config"])
     assert result.exit_code == 0
 
 from unittest.mock import patch, MagicMock
@@ -76,34 +79,76 @@ def test_check_github_upgrade(mock_get):
         assert "A newer version of Shadow OS is available" in printed_texts
 
 def test_settings_command_exit():
-    result = runner.invoke(app, ["settings"], input="7\n")
+    result = run_cmd(["settings"], input="7\n")
     assert result.exit_code == 0
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_command_update_and_exit():
-    result = runner.invoke(app, ["settings"], input="1\nPaletteTestUser\n7\n")
+    result = run_cmd(["settings"], input="1\nPaletteTestUser\n7\n")
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_provider():
-    result = runner.invoke(app, ["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
+    result = run_cmd(["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid provider selected." in result.stdout
     assert "Successfully updated 'default_provider' to 'gemini'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_notifications():
-    result = runner.invoke(app, ["settings"], input="4\ninvalid_mode\nnone\n7\n")
+    result = run_cmd(["settings"], input="4\ninvalid_mode\nnone\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid notification preferences." in result.stdout
     assert "Successfully updated 'notification_preferences' to 'none'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_battery():
-    result = runner.invoke(app, ["settings"], input="6\nabc\n105\n15\n7\n")
+    result = run_cmd(["settings"], input="6\nabc\n105\n15\n7\n")
     assert result.exit_code == 0
     assert "Error: Battery Saver Limit must be a valid integer." in result.stdout
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_api_key_indicators():
+    from shadow.core.config import reset_config
+
+    os.environ["SHADOW_DEFAULT_PROVIDER"] = "openai"
+    os.environ["SHADOW_OPENAI__API_KEY"] = "some-key"
+    reset_config(None)
+
+    try:
+        # 1. Verify (Key Set) is displayed
+        result = run_cmd(["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "openai" in result.stdout
+        assert "(Key Set)" in result.stdout
+
+        # 2. Verify (Key Missing) is displayed for gemini
+        os.environ["SHADOW_DEFAULT_PROVIDER"] = "gemini"
+        if "SHADOW_GEMINI__API_KEY" in os.environ:
+            del os.environ["SHADOW_GEMINI__API_KEY"]
+        reset_config(None)
+
+        result = run_cmd(["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "gemini" in result.stdout
+        assert "(Key Missing)" in result.stdout
+
+        # 3. Verify the keep-current prompt is displayed when key is already set
+        os.environ["SHADOW_DEFAULT_PROVIDER"] = "gemini"
+        os.environ["SHADOW_OPENAI__API_KEY"] = "some-key"
+        reset_config(None)
+
+        result = run_cmd(["settings"], input="3\nopenai\n\n7\n")
+        assert result.exit_code == 0
+        assert "Enter OPENAI API Key (already set, press Enter to keep current)" in result.stdout
+    finally:
+        if "SHADOW_DEFAULT_PROVIDER" in os.environ:
+            del os.environ["SHADOW_DEFAULT_PROVIDER"]
+        if "SHADOW_OPENAI__API_KEY" in os.environ:
+            del os.environ["SHADOW_OPENAI__API_KEY"]
+        if "SHADOW_GEMINI__API_KEY" in os.environ:
+            del os.environ["SHADOW_GEMINI__API_KEY"]
+        reset_config(None)
