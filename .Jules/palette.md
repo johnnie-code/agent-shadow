@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-08-03 - High-Contrast Colored CLI/TUI Dashboard Tables
+**Learning:** Terminal dashboard tables in TUI systems need high contrast and structured placeholders for empty states to stay accessible and clean. Standardizing column header styling, using `overflow="ellipsis"` on all columns to handle truncation gracefully, and utilizing structured muted `[dim]` tags for empty states prevents visual layout jank and provides high-quality guidance for the user.
+**Action:** Always explicitly style CLI/TUI headers, enable column truncation, and format empty states using structured placeholder text with muted tags instead of blank rows or default strings.
