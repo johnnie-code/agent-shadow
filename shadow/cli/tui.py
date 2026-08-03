@@ -61,15 +61,20 @@ def get_mission_panel() -> Panel:
     return Panel(text, title="🎯 Active Life Mission & Profile", border_style="cyan")
 
 def get_goals_table() -> Table:
-    table = Table(title="Goals & Milestones Progress", expand=True)
-    table.add_column("Goal Milestone", style="bold green", ratio=2)
-    table.add_column("Category", style="cyan")
-    table.add_column("Progress Bar", style="yellow", ratio=2)
-    table.add_column("Status", style="bold magenta")
+    table = Table(title="Goals & Milestones Progress", expand=True, border_style="cyan")
+    table.add_column("Goal Milestone", header_style="bold magenta", style="bold green", ratio=2, overflow="ellipsis")
+    table.add_column("Category", header_style="bold magenta", style="cyan", overflow="ellipsis")
+    table.add_column("Progress Bar", header_style="bold magenta", style="yellow", ratio=2, overflow="ellipsis")
+    table.add_column("Status", header_style="bold magenta", style="bold magenta", overflow="ellipsis")
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row(
+            "[dim]No goals tracked. Run 'shadow onboard' to define.[/dim]",
+            "[dim]N/A[/dim]",
+            "[dim]■■■■■■■■■■ 0%[/dim]",
+            "[dim]EMPTY[/dim]"
+        )
         return table
 
     for g in active_goals[:5]:
@@ -130,10 +135,10 @@ def get_planner_panel() -> Panel:
     return Panel(text, title="📅 Daily Planner & Focus", border_style="yellow")
 
 def get_status_table() -> Table:
-    table = Table(title="System & Android Capability Checklist", expand=True)
-    table.add_column("Subsystem", style="bold cyan")
-    table.add_column("Indicator", style="bold")
-    table.add_column("Details")
+    table = Table(title="System & Android Capability Checklist", expand=True, border_style="cyan")
+    table.add_column("Subsystem", header_style="bold magenta", style="bold cyan", overflow="ellipsis")
+    table.add_column("Indicator", header_style="bold magenta", style="bold", overflow="ellipsis")
+    table.add_column("Details", header_style="bold magenta", overflow="ellipsis")
 
     config = get_config()
 
