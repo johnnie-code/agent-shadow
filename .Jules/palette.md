@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-08-04 - High-Contrast Styled Rich Tables and Ellipsis Truncation
+**Learning:** Designing TUI tables in Rich requires explicit column overflow settings and customized headers to maintain readability across dynamic terminal widths and prevent layout blowups. Furthermore, formatting table empty states with dim text and realistic placeholder grids provides a more cohesive visual layout than default empty rows.
+**Action:** Always style headers using explicit colors like 'bold magenta', define column truncation properties like overflow='ellipsis', and represent empty states with structured placeholder rows using muted '[dim]' tags.
