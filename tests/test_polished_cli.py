@@ -107,3 +107,34 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_key_indicator_and_retention():
+    from shadow.core.config import get_config
+    cfg = get_config()
+
+    # 1. Test "mock" key indicator
+    cfg.default_provider = "mock"
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "mock" in result.stdout
+    assert "(No Key Needed)" in result.stdout
+
+    # 2. Test "openai" Key Missing indicator
+    cfg.default_provider = "openai"
+    cfg.openai.api_key = None
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "openai" in result.stdout
+    assert "(Key Missing)" in result.stdout
+
+    # 3. Test "openai" Key Set indicator
+    cfg.openai.api_key = "test_key_abc"
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "openai" in result.stdout
+    assert "(Key Set)" in result.stdout
+
+    # 4. Test API Key retention prompt
+    result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+    assert result.exit_code == 0
+    assert "already set, press Enter to keep current" in result.stdout
