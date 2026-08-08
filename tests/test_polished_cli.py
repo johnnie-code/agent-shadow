@@ -104,6 +104,33 @@ def test_settings_validation_battery():
     result = runner.invoke(app, ["settings"], input="6\nabc\n105\n15\n7\n")
     assert result.exit_code == 0
     assert "Error: Battery Saver Limit must be a valid integer." in result.stdout
+    assert "Error: Battery Saver Limit must be between 0 image/or integer." not in result.stdout  # just verifying
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_api_key_indicators():
+    from shadow.core.config import get_config
+    cfg = get_config()
+    cfg.default_provider = "gemini"
+    cfg.gemini.api_key = "fake-gemini-key"
+
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "3. AI Provider:         gemini (Key Set)" in result.stdout
+
+    cfg.default_provider = "openai"
+    cfg.openai.api_key = None
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "3. AI Provider:         openai (Key Missing)" in result.stdout
+
+def test_settings_already_set_prompt():
+    from shadow.core.config import get_config
+    cfg = get_config()
+    cfg.default_provider = "gemini"
+    cfg.gemini.api_key = "fake-gemini-key"
+
+    result = runner.invoke(app, ["settings"], input="3\ngemini\n\n7\n")
+    assert result.exit_code == 0
+    assert "Enter GEMINI API Key (already set, press Enter to keep current)" in result.stdout
