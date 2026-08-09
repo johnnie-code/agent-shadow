@@ -1,7 +1,6 @@
 import os
 import pytest
 from typer.testing import CliRunner
-from shadow.cli.main import app
 from shadow.core.config import SHADOW_HOME
 
 runner = CliRunner()
@@ -15,7 +14,19 @@ def backup_restore_env():
     if os.path.exists(env_file):
         shutil.copy2(env_file, backup_file)
         has_backup = True
+
+    # Backup SHADOW_ keys in os.environ
+    orig_env = {k: v for k, v in os.environ.items() if k.startswith("SHADOW_")}
+
     yield
+
+    # Restore SHADOW_ keys in os.environ
+    for k in list(os.environ.keys()):
+        if k.startswith("SHADOW_"):
+            del os.environ[k]
+    for k, v in orig_env.items():
+        os.environ[k] = v
+
     if has_backup:
         shutil.move(backup_file, env_file)
     elif os.path.exists(env_file):
@@ -24,6 +35,7 @@ def backup_restore_env():
     reset_config(None)
 
 def test_version_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert "Shadow OS" in result.stdout
@@ -31,21 +43,25 @@ def test_version_command():
     assert "Platform" in result.stdout
 
 def test_diagnostics_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["diagnostics"])
     assert result.exit_code == 0
     assert "Running Diagnostics" in result.stdout
 
 def test_repair_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["repair"])
     assert result.exit_code == 0
     assert "Shadow Auto-Repair" in result.stdout
 
 def test_runtime_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["runtime", "status"])
     assert result.exit_code == 0
     assert "Autonomous Runtime" in result.stdout
 
 def test_telegram_command_not_configured():
+    from shadow.cli.main import app
     from shadow.core.config import get_config
     cfg = get_config()
     orig_token = cfg.telegram_bot_token
@@ -57,6 +73,7 @@ def test_telegram_command_not_configured():
         cfg.telegram_bot_token = orig_token
 
 def test_config_command():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
 
@@ -76,17 +93,20 @@ def test_check_github_upgrade(mock_get):
         assert "A newer version of Shadow OS is available" in printed_texts
 
 def test_settings_command_exit():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="7\n")
     assert result.exit_code == 0
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_command_update_and_exit():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="1\nPaletteTestUser\n7\n")
     assert result.exit_code == 0
     assert "Successfully updated 'user_name' to 'PaletteTestUser'" in result.stdout
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_provider():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="3\ninvalid_provider\ngemini\n\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid provider selected." in result.stdout
@@ -94,6 +114,7 @@ def test_settings_validation_provider():
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_notifications():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="4\ninvalid_mode\nnone\n7\n")
     assert result.exit_code == 0
     assert "Error: Invalid notification preferences." in result.stdout
@@ -101,9 +122,24 @@ def test_settings_validation_notifications():
     assert "Exiting settings menu" in result.stdout
 
 def test_settings_validation_battery():
+    from shadow.cli.main import app
     result = runner.invoke(app, ["settings"], input="6\nabc\n105\n15\n7\n")
     assert result.exit_code == 0
     assert "Error: Battery Saver Limit must be a valid integer." in result.stdout
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
+    assert "Exiting settings menu" in result.stdout
+
+
+def test_settings_key_presence_and_safe_prompt():
+    from shadow.cli.main import app
+    # 1. Update provider to openai and set key to "abc_key"
+    # Inputs:
+    # 3 (Select provider) -> openai -> abc_key
+    # 3 (Select provider again) -> openai -> [enter] (keep current)
+    # 7 (Exit)
+    result = runner.invoke(app, ["settings"], input="3\nopenai\nabc_key\n3\nopenai\n\n7\n")
+    assert result.exit_code == 0
+    assert "(Key Set)" in result.stdout
+    assert "Enter OPENAI API Key (already set, press Enter to keep current)" in result.stdout
     assert "Exiting settings menu" in result.stdout

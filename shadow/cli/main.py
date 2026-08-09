@@ -866,6 +866,8 @@ def config_set_env(key: str, value: str):
     with open(env_file, "w") as f:
         f.writelines(lines)
 
+    os.environ[key_str] = value
+
     from shadow.core.config import reset_config
     reset_config(None)
     console.print(f"[green]✔ Successfully updated '{key}' to '{value}'.[/green]")
@@ -877,10 +879,20 @@ def settings():
     """
     while True:
         config = get_config()
+        provider = config.default_provider
+        key_indicator = ""
+        if provider != "mock":
+            provider_cfg = getattr(config, provider, None)
+            has_key = provider_cfg and provider_cfg.api_key
+            if has_key:
+                key_indicator = " [bold green](Key Set)[/bold green]"
+            else:
+                key_indicator = " [bold red](Key Missing)[/bold red]"
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]{key_indicator}")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -901,7 +913,13 @@ def settings():
                 console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
+                fresh_config = get_config()
+                provider_cfg = getattr(fresh_config, new_provider, None)
+                has_key = provider_cfg and provider_cfg.api_key
+                prompt_msg = f"Enter {new_provider.upper()} API Key"
+                if has_key:
+                    prompt_msg += " (already set, press Enter to keep current)"
+                new_key = typer.prompt(prompt_msg, hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":
