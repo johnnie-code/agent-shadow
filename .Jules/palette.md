@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-08-11 - CLI App and Command Isolation in Testing
+**Learning:** In projects where dynamic module modifications (like resetting `sys.modules`) are performed by some tests to verify environmental fallbacks, other tests importing Typer `app` or config singletons at the module level can suffer from reference desynchronization and flaky assertions. Utilizing local import wrappers (e.g. `get_app()` helper function) guarantees fresh, synchronized imports within each test block.
+**Action:** Always wrap top-level Typer `app` and configuration instances in local importer utilities within the test module to prevent desynchronization during full-suite test runs.
