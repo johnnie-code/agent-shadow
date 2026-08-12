@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-08-12 - CLI Integration Testing and Environment Isolation
+**Learning:** When writing integration tests for interactive CLI configurations (such as settings commands), state and environment variables can leak across test cases or test files in the same runner process. Temporarily moving/backing up the on-disk `.env` file and isolating `os.environ` keys starting with `SHADOW_` prevents flaky test suite behavior and guarantees a clean, predictable state for each test.
+**Action:** Always use a scoped autouse fixture to isolate and restore both the on-disk configuration files and active environment variables when testing configuration CLI commands.

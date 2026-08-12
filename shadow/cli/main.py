@@ -866,9 +866,22 @@ def config_set_env(key: str, value: str):
     with open(env_file, "w") as f:
         f.writelines(lines)
 
+    os.environ[key_str] = value
+
     from shadow.core.config import reset_config
     reset_config(None)
     console.print(f"[green]✔ Successfully updated '{key}' to '{value}'.[/green]")
+
+def is_provider_key_configured(provider: str, config) -> bool:
+    if provider == "openai":
+        return bool(config.openai.api_key)
+    elif provider == "anthropic":
+        return bool(config.anthropic.api_key)
+    elif provider == "gemini":
+        return bool(config.gemini.api_key)
+    elif provider == "ollama":
+        return bool(config.ollama.api_key)
+    return False
 
 @app.command()
 def settings():
@@ -877,10 +890,17 @@ def settings():
     """
     while True:
         config = get_config()
+        provider_str = config.default_provider
+        if provider_str != "mock":
+            has_key = is_provider_key_configured(provider_str, config)
+            key_indicator = " [green](Key Set)[/green]" if has_key else " [red](Key Missing)[/red]"
+        else:
+            key_indicator = ""
+
         console.print("\n[bold cyan]=== PROJECT SHADOW SETTINGS INTERFACE ===[/bold cyan]\n")
         console.print(f"1. User Profile Name:   [green]{config.user_name}[/green]")
         console.print(f"2. Assistant Name:      [green]{config.assistant_name}[/green]")
-        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]")
+        console.print(f"3. AI Provider:         [green]{config.default_provider}[/green]{key_indicator}")
         console.print(f"4. Notification Mode:   [green]{config.notification_preferences}[/green]")
         console.print(f"5. Theme/Styling:       [green]Standard Dark[/green]")
         console.print(f"6. Battery Saver Limit: [green]{config.battery_limit}%[/green]")
@@ -901,7 +921,9 @@ def settings():
                 console.print("[bold red]Error: Invalid provider selected. Must be one of: mock, openai, anthropic, gemini, ollama.[/bold red]")
             config_set_env("default_provider", new_provider)
             if new_provider != "mock":
-                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key", hide_input=True, default="", show_default=False)
+                has_key = is_provider_key_configured(new_provider, config)
+                prompt_suffix = " (already set, press Enter to keep current)" if has_key else ""
+                new_key = typer.prompt(f"Enter {new_provider.upper()} API Key{prompt_suffix}", hide_input=True, default="", show_default=False)
                 if new_key:
                     config_set_env(f"{new_provider.upper()}__API_KEY", new_key)
         elif choice == "4":

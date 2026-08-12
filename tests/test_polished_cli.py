@@ -13,14 +13,34 @@ def backup_restore_env():
     backup_file = env_file + ".bak"
     has_backup = False
     if os.path.exists(env_file):
-        shutil.copy2(env_file, backup_file)
+        shutil.move(env_file, backup_file)
         has_backup = True
+
+    # Backup os.environ starting with SHADOW_
+    env_backup = {k: v for k, v in os.environ.items() if k.startswith("SHADOW_")}
+
+    # Clean up SHADOW_ variables for total isolation in this test file
+    for k in list(os.environ.keys()):
+        if k.startswith("SHADOW_") and k != "SHADOW_HOME":
+            del os.environ[k]
+
+    from shadow.core.config import reset_config
+    reset_config(None)
+
     yield
+
     if has_backup:
         shutil.move(backup_file, env_file)
     elif os.path.exists(env_file):
         os.remove(env_file)
-    from shadow.core.config import reset_config
+
+    # Restore os.environ starting with SHADOW_
+    current_keys = [k for k in os.environ if k.startswith("SHADOW_")]
+    for k in current_keys:
+        del os.environ[k]
+    for k, v in env_backup.items():
+        os.environ[k] = v
+
     reset_config(None)
 
 def test_version_command():
@@ -107,3 +127,56 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_api_key_indicators():
+    from shadow.core.config import get_config, reset_config
+    # Force default provider to openai and ensure key indicator says "Key Missing" (unless mock key is set/loaded from env)
+    # First, test what happens when defaulting to mock
+    os.environ["SHADOW_DEFAULT_PROVIDER"] = "mock"
+    reset_config(None)
+    config = get_config()
+    try:
+        # Exit settings immediately. Mock should not show Key Set/Missing
+        result = runner.invoke(app, ["settings"], input="7\n")
+        assert result.exit_code == 0
+        assert "AI Provider:         mock" in result.stdout
+        assert "Key Set" not in result.stdout
+        assert "Key Missing" not in result.stdout
+
+        # Change provider to openai (no key configured initially)
+        # Note: we mock openai key to be empty
+        os.environ["SHADOW_OPENAI__API_KEY"] = ""
+        reset_config(None)
+        config = get_config()
+        try:
+            # Choose option 3, set to openai, leave key empty, then exit
+            result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+            assert result.exit_code == 0
+            # Next iteration displays openai with (Key Missing)
+            assert "AI Provider:         openai (Key Missing)" in result.stdout
+            assert "Enter OPENAI API Key" in result.stdout
+            assert "already set" not in result.stdout
+        finally:
+            if "SHADOW_OPENAI__API_KEY" in os.environ:
+                del os.environ["SHADOW_OPENAI__API_KEY"]
+            reset_config(None)
+
+        # Change provider to openai with key configured
+        os.environ["SHADOW_OPENAI__API_KEY"] = "some_dummy_key"
+        reset_config(None)
+        config = get_config()
+        try:
+            # Option 3, set to openai. Prompt for key should show already set message. Press enter to keep current.
+            result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+            assert result.exit_code == 0
+            assert "AI Provider:         openai (Key Set)" in result.stdout
+            assert "Enter OPENAI API Key (already set, press Enter to keep current)" in result.stdout
+        finally:
+            if "SHADOW_OPENAI__API_KEY" in os.environ:
+                del os.environ["SHADOW_OPENAI__API_KEY"]
+            reset_config(None)
+
+    finally:
+        if "SHADOW_DEFAULT_PROVIDER" in os.environ:
+            del os.environ["SHADOW_DEFAULT_PROVIDER"]
+        reset_config(None)
