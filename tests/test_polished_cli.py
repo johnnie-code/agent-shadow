@@ -107,3 +107,25 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_settings_key_status_ux():
+    if "SHADOW_OPENAI__API_KEY" in os.environ:
+        del os.environ["SHADOW_OPENAI__API_KEY"]
+    from shadow.core.config import reset_config
+    reset_config(None)
+
+    # First test that Key Missing/No Key Required is printed
+    result = runner.invoke(app, ["settings"], input="7\n")
+    assert result.exit_code == 0
+    assert "(No Key Required)" in result.stdout or "(Key Missing)" in result.stdout
+
+    # Now select option 3 (AI Provider), set to openai, input a key, then verify Key Set is shown next time
+    result = runner.invoke(app, ["settings"], input="3\nopenai\nsuper-secret-key\n7\n")
+    assert result.exit_code == 0
+    assert "Successfully updated 'default_provider' to 'openai'" in result.stdout
+
+    # Try updating default provider again to check for the warning hint
+    result = runner.invoke(app, ["settings"], input="3\nopenai\n\n7\n")
+    assert result.exit_code == 0
+    assert "(already set, press Enter to keep current)" in result.stdout
+    assert "(Key Set)" in result.stdout
