@@ -107,3 +107,18 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+@patch("shadow.cli.tui.goals_engine.get_active_goals", return_value=[])
+def test_tui_get_goals_table_empty_state(mock_get_goals):
+    from shadow.cli.tui import get_goals_table
+    from rich.console import Console
+
+    table = get_goals_table()
+    console = Console(record=True, width=200)
+    console.print(table)
+    rendered_output = console.export_text()
+
+    assert "No goals tracked. Run 'shadow onboard' to define." in rendered_output
+    assert "System" in rendered_output
+    assert "[░░░░░░░░░░] 0%" in rendered_output
+    assert "INACTIVE" in rendered_output
