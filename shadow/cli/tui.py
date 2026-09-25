@@ -69,7 +69,12 @@ def get_goals_table() -> Table:
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row(
+            "[dim]No goals tracked. Run 'shadow onboard' to define.[/dim]",
+            "[dim]System[/dim]",
+            "[dim][░░░░░░░░░░] 0%[/dim]",
+            "[dim]INACTIVE[/dim]"
+        )
         return table
 
     for g in active_goals[:5]:
