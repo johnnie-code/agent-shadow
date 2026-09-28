@@ -61,15 +61,25 @@ def get_mission_panel() -> Panel:
     return Panel(text, title="🎯 Active Life Mission & Profile", border_style="cyan")
 
 def get_goals_table() -> Table:
-    table = Table(title="Goals & Milestones Progress", expand=True)
-    table.add_column("Goal Milestone", style="bold green", ratio=2)
+    table = Table(
+        title="Goals & Milestones Progress",
+        expand=True,
+        header_style="bold magenta",
+        border_style="cyan"
+    )
+    table.add_column("Goal Milestone", style="bold green", ratio=2, overflow="ellipsis")
     table.add_column("Category", style="cyan")
     table.add_column("Progress Bar", style="yellow", ratio=2)
     table.add_column("Status", style="bold magenta")
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row(
+            "[dim]No goals tracked. Run 'shadow onboard' to define.[/dim]",
+            "[dim]—[/dim]",
+            "[dim]—[/dim]",
+            "[dim]EMPTY[/dim]"
+        )
         return table
 
     for g in active_goals[:5]:
