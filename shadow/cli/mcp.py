@@ -207,6 +207,7 @@ def mcp_tools(name: Optional[str] = typer.Option(None, "--server", "-s", help="S
     servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
     servers = [s for s in servers if s]
 
+    rows_found = False
     table = Table(title="Discovered MCP Tools")
     table.add_column("Server", style="cyan")
     table.add_column("Tool Name", style="bold green")
@@ -218,8 +219,13 @@ def mcp_tools(name: Optional[str] = typer.Option(None, "--server", "-s", help="S
             for t in tools:
                 perm = mcp_manager.get_permission(s["name"], t)
                 table.add_row(s["name"], t, perm)
+                rows_found = True
         except Exception:
             pass
+
+    if not rows_found:
+        console.print("[yellow]No discovered MCP tools found.[/yellow]")
+        return
 
     console.print(table)
 
@@ -231,6 +237,7 @@ def mcp_resources(name: Optional[str] = typer.Option(None, "--server", "-s", hel
     servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
     servers = [s for s in servers if s]
 
+    rows_found = False
     table = Table(title="Discovered MCP Resources")
     table.add_column("Server", style="cyan")
     table.add_column("Resource URI", style="bold green")
@@ -240,8 +247,13 @@ def mcp_resources(name: Optional[str] = typer.Option(None, "--server", "-s", hel
             res = json.loads(s.get("resources") or "[]")
             for r in res:
                 table.add_row(s["name"], r)
+                rows_found = True
         except Exception:
             pass
+
+    if not rows_found:
+        console.print("[yellow]No discovered MCP resources found.[/yellow]")
+        return
 
     console.print(table)
 
@@ -253,6 +265,7 @@ def mcp_prompts(name: Optional[str] = typer.Option(None, "--server", "-s", help=
     servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
     servers = [s for s in servers if s]
 
+    rows_found = False
     table = Table(title="Discovered MCP Prompts")
     table.add_column("Server", style="cyan")
     table.add_column("Prompt Name", style="bold green")
@@ -262,7 +275,12 @@ def mcp_prompts(name: Optional[str] = typer.Option(None, "--server", "-s", help=
             prompts = json.loads(s.get("prompts") or "[]")
             for p in prompts:
                 table.add_row(s["name"], p)
+                rows_found = True
         except Exception:
             pass
+
+    if not rows_found:
+        console.print("[yellow]No discovered MCP prompts found.[/yellow]")
+        return
 
     console.print(table)
