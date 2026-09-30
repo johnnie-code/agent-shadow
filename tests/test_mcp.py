@@ -106,3 +106,25 @@ async def test_mcp_unavailable_fallback():
             assert cap.details.get("error") == "mcp package is not installed"
     finally:
         shadow.core.mcp_manager.mcp_available = orig_mcp_available
+
+def test_mcp_cli_empty_states():
+    from typer.testing import CliRunner
+    from shadow.cli.mcp import mcp_app
+
+    runner = CliRunner()
+    init_db()
+
+    # Test mcp tools empty state
+    res_tools = runner.invoke(mcp_app, ["tools"])
+    assert res_tools.exit_code == 0
+    assert "No discovered MCP tools found." in res_tools.stdout
+
+    # Test mcp resources empty state
+    res_resources = runner.invoke(mcp_app, ["resources"])
+    assert res_resources.exit_code == 0
+    assert "No discovered MCP resources found." in res_resources.stdout
+
+    # Test mcp prompts empty state
+    res_prompts = runner.invoke(mcp_app, ["prompts"])
+    assert res_prompts.exit_code == 0
+    assert "No discovered MCP prompts found." in res_prompts.stdout
