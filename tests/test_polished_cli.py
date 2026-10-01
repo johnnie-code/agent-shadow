@@ -23,6 +23,15 @@ def backup_restore_env():
     from shadow.core.config import reset_config
     reset_config(None)
 
+from unittest.mock import patch
+
+def test_tui_get_goals_table_empty():
+    from shadow.cli.tui import get_goals_table
+    with patch("shadow.cli.tui.goals_engine.get_active_goals", return_value=[]):
+        table = get_goals_table()
+        assert table.title == "Goals & Milestones Progress"
+        assert len(table.rows) == 1
+
 def test_version_command():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
