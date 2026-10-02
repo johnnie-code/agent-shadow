@@ -107,3 +107,22 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_tui_goals_table_rendering():
+    from shadow.cli.tui import get_goals_table
+    with patch("shadow.goals.engine.goals_engine.get_active_goals") as mock_goals:
+        # 1. Test empty state table rendering
+        mock_goals.return_value = []
+        table = get_goals_table()
+        assert table.title == "Goals & Milestones Progress"
+        assert len(table.columns) == 4
+
+        # 2. Test table rendering with active goals
+        mock_goals.return_value = [
+            {"id": 1, "title": "Launch Autonomous OS", "category": "Tech", "status": "completed"},
+            {"id": 2, "title": "Improve TUI UX", "category": "Design", "status": "active"},
+            {"id": 3, "title": "Run background tasks", "category": "Core", "status": "running"},
+            {"id": 4, "title": "Future feature", "category": "Roadmap", "status": "pending"}
+        ]
+        table_active = get_goals_table()
+        assert len(table_active.rows) == 4

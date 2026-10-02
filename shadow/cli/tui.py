@@ -61,32 +61,40 @@ def get_mission_panel() -> Panel:
     return Panel(text, title="🎯 Active Life Mission & Profile", border_style="cyan")
 
 def get_goals_table() -> Table:
-    table = Table(title="Goals & Milestones Progress", expand=True)
-    table.add_column("Goal Milestone", style="bold green", ratio=2)
-    table.add_column("Category", style="cyan")
-    table.add_column("Progress Bar", style="yellow", ratio=2)
-    table.add_column("Status", style="bold magenta")
+    table = Table(title="Goals & Milestones Progress", expand=True, header_style="bold magenta", border_style="cyan")
+    table.add_column("Goal Milestone", style="bold green", ratio=2, overflow="ellipsis")
+    table.add_column("Category", style="cyan", overflow="ellipsis")
+    table.add_column("Progress Bar", style="yellow", ratio=2, overflow="ellipsis")
+    table.add_column("Status", style="bold magenta", overflow="ellipsis")
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row("[dim]No goals tracked. Run 'shadow mission' or 'shadow onboard' to define.[/dim]", "—", "—", "—")
         return table
 
     for g in active_goals[:5]:
-        status = g["status"]
+        status = g.get("status", "pending")
         progress = 10
-        if status == "completed":
+        status_lower = status.lower()
+        if status_lower == "completed":
             progress = 100
-        elif status == "active" or status == "running":
+            status_badge = "[bold green]COMPLETED[/bold green]"
+        elif status_lower == "active":
             progress = 40
+            status_badge = "[bold yellow]ACTIVE[/bold yellow]"
+        elif status_lower == "running":
+            progress = 40
+            status_badge = "[bold cyan]RUNNING[/bold cyan]"
+        else:
+            status_badge = f"[dim]{status.upper()}[/dim]"
 
         bar_filled = progress // 10
         progress_bar = "■" * bar_filled + "□" * (10 - bar_filled)
         table.add_row(
             g["title"][:40],
-            g["category"] or "General",
+            g.get("category") or "General",
             f"[{progress_bar}] {progress}%",
-            g["status"].upper()
+            status_badge
         )
     return table
 
