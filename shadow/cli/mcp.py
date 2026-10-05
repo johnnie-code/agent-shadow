@@ -204,7 +204,15 @@ def mcp_tools(name: Optional[str] = typer.Option(None, "--server", "-s", help="S
     """
     List automatically discovered tools.
     """
-    servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
+    if name:
+        srv = mcp_manager.get_db_server(name)
+        if not srv:
+            console.print(f"[yellow]MCP Server '{name}' not found.[/yellow]")
+            return
+        servers = [srv]
+    else:
+        servers = mcp_manager.get_db_servers()
+
     servers = [s for s in servers if s]
 
     table = Table(title="Discovered MCP Tools")
@@ -212,57 +220,88 @@ def mcp_tools(name: Optional[str] = typer.Option(None, "--server", "-s", help="S
     table.add_column("Tool Name", style="bold green")
     table.add_column("Permission Level", style="yellow")
 
+    item_count = 0
     for s in servers:
         try:
             tools = json.loads(s.get("tools") or "[]")
             for t in tools:
                 perm = mcp_manager.get_permission(s["name"], t)
                 table.add_row(s["name"], t, perm)
+                item_count += 1
         except Exception:
             pass
 
-    console.print(table)
+    if item_count == 0:
+        console.print("[yellow]No discovered MCP tools found.[/yellow]")
+    else:
+        console.print(table)
 
 @mcp_app.command("resources")
 def mcp_resources(name: Optional[str] = typer.Option(None, "--server", "-s", help="Server name")):
     """
     List automatically discovered resources.
     """
-    servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
+    if name:
+        srv = mcp_manager.get_db_server(name)
+        if not srv:
+            console.print(f"[yellow]MCP Server '{name}' not found.[/yellow]")
+            return
+        servers = [srv]
+    else:
+        servers = mcp_manager.get_db_servers()
+
     servers = [s for s in servers if s]
 
     table = Table(title="Discovered MCP Resources")
     table.add_column("Server", style="cyan")
     table.add_column("Resource URI", style="bold green")
 
+    item_count = 0
     for s in servers:
         try:
             res = json.loads(s.get("resources") or "[]")
             for r in res:
                 table.add_row(s["name"], r)
+                item_count += 1
         except Exception:
             pass
 
-    console.print(table)
+    if item_count == 0:
+        console.print("[yellow]No discovered MCP resources found.[/yellow]")
+    else:
+        console.print(table)
 
 @mcp_app.command("prompts")
 def mcp_prompts(name: Optional[str] = typer.Option(None, "--server", "-s", help="Server name")):
     """
     List automatically discovered prompts.
     """
-    servers = [mcp_manager.get_db_server(name)] if name else mcp_manager.get_db_servers()
+    if name:
+        srv = mcp_manager.get_db_server(name)
+        if not srv:
+            console.print(f"[yellow]MCP Server '{name}' not found.[/yellow]")
+            return
+        servers = [srv]
+    else:
+        servers = mcp_manager.get_db_servers()
+
     servers = [s for s in servers if s]
 
     table = Table(title="Discovered MCP Prompts")
     table.add_column("Server", style="cyan")
     table.add_column("Prompt Name", style="bold green")
 
+    item_count = 0
     for s in servers:
         try:
             prompts = json.loads(s.get("prompts") or "[]")
             for p in prompts:
                 table.add_row(s["name"], p)
+                item_count += 1
         except Exception:
             pass
 
-    console.print(table)
+    if item_count == 0:
+        console.print("[yellow]No discovered MCP prompts found.[/yellow]")
+    else:
+        console.print(table)
