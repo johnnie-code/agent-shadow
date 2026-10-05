@@ -83,6 +83,52 @@ def test_unified_tool_resolution():
     assert tool2 == "read_file"
 
 @pytest.mark.asyncio
+async def test_mcp_cli_empty_states_and_server_filtering():
+    from typer.testing import CliRunner
+    from shadow.cli.mcp import mcp_app
+
+    runner = CliRunner()
+    init_db()
+
+    # Test non-existent server
+    res_tools = runner.invoke(mcp_app, ["tools", "--server", "nonexistent-server"])
+    assert res_tools.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_tools.stdout
+
+    res_res = runner.invoke(mcp_app, ["resources", "--server", "nonexistent-server"])
+    assert res_res.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_res.stdout
+
+    res_prompts = runner.invoke(mcp_app, ["prompts", "--server", "nonexistent-server"])
+    assert res_prompts.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_prompts.stdout
+
+    # Test empty items empty state
+    mcp_manager.install_server(
+        name="empty-mock-server",
+        transport="stdio",
+        command="python",
+        args=["--version"],
+        workspace="global",
+        description="An empty MCP server"
+    )
+
+    try:
+        res_empty_tools = runner.invoke(mcp_app, ["tools", "--server", "empty-mock-server"])
+        assert res_empty_tools.exit_code == 0
+        assert "No discovered MCP tools found." in res_empty_tools.stdout
+
+        res_empty_res = runner.invoke(mcp_app, ["resources", "--server", "empty-mock-server"])
+        assert res_empty_res.exit_code == 0
+        assert "No discovered MCP resources found." in res_empty_res.stdout
+
+        res_empty_prompts = runner.invoke(mcp_app, ["prompts", "--server", "empty-mock-server"])
+        assert res_empty_prompts.exit_code == 0
+        assert "No discovered MCP prompts found." in res_empty_prompts.stdout
+    finally:
+        mcp_manager.remove_server("empty-mock-server")
+
+@pytest.mark.asyncio
 async def test_mcp_unavailable_fallback():
     # Force mcp_available to False
     import shadow.core.mcp_manager

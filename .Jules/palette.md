@@ -9,3 +9,7 @@ This journal documents critical, reusable UX and accessibility insights discover
 ## 2026-07-21 - CLI Input Validation and Key Masking UX
 **Learning:** When users edit critical configuration variables in an interactive CLI (like default AI providers or numerical limits), missing validation can lead to malformed config files that crash subsequent application boots. In addition, using non-standard prompting parameters (like password=True in Typer) can cause silent test runner crashes; using the standard hide_input=True ensures robust input masking and universal framework compatibility.
 **Action:** Always wrap interactive prompts in strict type-and-value validation loops with helpful error explanations, and mask sensitive credentials with standard, compliant prompt attributes.
+
+## 2026-10-05 - Rich CLI Table Empty State UX
+**Learning:** Rendering empty Rich tables without rows creates confusing UI frames without actionable information for terminal users. Validating entity existence and handling empty results with explicit, styled warning messages improves interface clarity and accessibility.
+**Action:** Always check row count before printing Rich tables and output helpful empty state messages when no data exists.
