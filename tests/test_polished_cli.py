@@ -107,3 +107,20 @@ def test_settings_validation_battery():
     assert "Error: Battery Saver Limit must be between 0 and 100." in result.stdout
     assert "Successfully updated 'battery_limit' to '15'" in result.stdout
     assert "Exiting settings menu" in result.stdout
+
+def test_mcp_cli_empty_states():
+    res_tools = runner.invoke(app, ["mcp", "tools"])
+    assert res_tools.exit_code == 0
+    assert "No discovered MCP tools" in res_tools.stdout or "No registered MCP servers" in res_tools.stdout
+
+    res_resources = runner.invoke(app, ["mcp", "resources"])
+    assert res_resources.exit_code == 0
+    assert "No discovered MCP resources" in res_resources.stdout or "No registered MCP servers" in res_resources.stdout
+
+    res_prompts = runner.invoke(app, ["mcp", "prompts"])
+    assert res_prompts.exit_code == 0
+    assert "No discovered MCP prompts" in res_prompts.stdout or "No registered MCP servers" in res_prompts.stdout
+
+    res_missing_server = runner.invoke(app, ["mcp", "tools", "--server", "nonexistent_server"])
+    assert res_missing_server.exit_code == 0
+    assert "MCP Server 'nonexistent_server' not found." in res_missing_server.stdout
