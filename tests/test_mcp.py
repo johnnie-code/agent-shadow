@@ -106,3 +106,36 @@ async def test_mcp_unavailable_fallback():
             assert cap.details.get("error") == "mcp package is not installed"
     finally:
         shadow.core.mcp_manager.mcp_available = orig_mcp_available
+
+def test_mcp_cli_discovery_ux():
+    from typer.testing import CliRunner
+    from shadow.cli.mcp import mcp_app
+
+    runner = CliRunner()
+    init_db()
+
+    # Test server not found handling
+    res_tools = runner.invoke(mcp_app, ["tools", "--server", "nonexistent-server"])
+    assert res_tools.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_tools.stdout
+
+    res_res = runner.invoke(mcp_app, ["resources", "--server", "nonexistent-server"])
+    assert res_res.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_res.stdout
+
+    res_prompts = runner.invoke(mcp_app, ["prompts", "--server", "nonexistent-server"])
+    assert res_prompts.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res_prompts.stdout
+
+    # Test empty state warnings when no items are discovered
+    res_tools_empty = runner.invoke(mcp_app, ["tools"])
+    assert res_tools_empty.exit_code == 0
+    assert "No tools discovered" in res_tools_empty.stdout
+
+    res_res_empty = runner.invoke(mcp_app, ["resources"])
+    assert res_res_empty.exit_code == 0
+    assert "No resources discovered" in res_res_empty.stdout
+
+    res_prompts_empty = runner.invoke(mcp_app, ["prompts"])
+    assert res_prompts_empty.exit_code == 0
+    assert "No prompts discovered" in res_prompts_empty.stdout
