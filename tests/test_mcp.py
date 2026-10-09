@@ -83,6 +83,44 @@ def test_unified_tool_resolution():
     assert tool2 == "read_file"
 
 @pytest.mark.asyncio
+async def test_mcp_cli_empty_states_and_missing_server():
+    from typer.testing import CliRunner
+    from shadow.cli.mcp import mcp_app
+
+    runner = CliRunner()
+    init_db()
+
+    # 1. Non-existent server
+    res = runner.invoke(mcp_app, ["tools", "--server", "nonexistent-server"])
+    assert res.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res.stdout
+
+    res = runner.invoke(mcp_app, ["resources", "-s", "nonexistent-server"])
+    assert res.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res.stdout
+
+    res = runner.invoke(mcp_app, ["prompts", "-s", "nonexistent-server"])
+    assert res.exit_code == 0
+    assert "MCP Server 'nonexistent-server' not found." in res.stdout
+
+    # 2. Server exists but has no discovered tools, resources, or prompts
+    mcp_manager.install_server("empty-test-server", "stdio")
+    try:
+        res = runner.invoke(mcp_app, ["tools", "-s", "empty-test-server"])
+        assert res.exit_code == 0
+        assert "No discovered tools found." in res.stdout
+
+        res = runner.invoke(mcp_app, ["resources", "-s", "empty-test-server"])
+        assert res.exit_code == 0
+        assert "No discovered resources found." in res.stdout
+
+        res = runner.invoke(mcp_app, ["prompts", "-s", "empty-test-server"])
+        assert res.exit_code == 0
+        assert "No discovered prompts found." in res.stdout
+    finally:
+        mcp_manager.remove_server("empty-test-server")
+
+@pytest.mark.asyncio
 async def test_mcp_unavailable_fallback():
     # Force mcp_available to False
     import shadow.core.mcp_manager
