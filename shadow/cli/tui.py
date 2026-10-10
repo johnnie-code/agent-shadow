@@ -61,15 +61,15 @@ def get_mission_panel() -> Panel:
     return Panel(text, title="🎯 Active Life Mission & Profile", border_style="cyan")
 
 def get_goals_table() -> Table:
-    table = Table(title="Goals & Milestones Progress", expand=True)
-    table.add_column("Goal Milestone", style="bold green", ratio=2)
-    table.add_column("Category", style="cyan")
+    table = Table(title="Goals & Milestones Progress", expand=True, header_style="bold magenta")
+    table.add_column("Goal Milestone", style="bold green", ratio=2, overflow="ellipsis")
+    table.add_column("Category", style="cyan", overflow="ellipsis")
     table.add_column("Progress Bar", style="yellow", ratio=2)
     table.add_column("Status", style="bold magenta")
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row("[dim]No goals tracked. Run 'shadow onboard' to define.[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]NONE[/dim]")
         return table
 
     for g in active_goals[:5]:
@@ -118,22 +118,25 @@ def get_planner_panel() -> Panel:
 
     cursor.execute("SELECT title FROM tasks WHERE status = 'pending' ORDER BY priority_score DESC LIMIT 1")
     top_task_row = cursor.fetchone()
-    top_task = top_task_row["title"] if top_task_row else "All caught up!"
-
     conn.close()
+
+    if top_task_row:
+        top_task_str = f"➡ [bold green]{top_task_row['title'][:50]}[/bold green]"
+    else:
+        top_task_str = "➡ [dim]All caught up![/dim]"
 
     text = (
         f"[bold white]Pending Priorities Count:[/bold white] {pending} tasks\n"
         f"[bold white]Completed Tasks Today:[/bold white] {completed} items\n"
-        f"[bold yellow]Next Recommended Focus:[/bold yellow]\n  ➡ [bold green]{top_task[:50]}[/bold green]"
+        f"[bold yellow]Next Recommended Focus:[/bold yellow]\n  {top_task_str}"
     )
     return Panel(text, title="📅 Daily Planner & Focus", border_style="yellow")
 
 def get_status_table() -> Table:
-    table = Table(title="System & Android Capability Checklist", expand=True)
+    table = Table(title="System & Android Capability Checklist", expand=True, header_style="bold cyan")
     table.add_column("Subsystem", style="bold cyan")
     table.add_column("Indicator", style="bold")
-    table.add_column("Details")
+    table.add_column("Details", overflow="ellipsis")
 
     config = get_config()
 
@@ -174,7 +177,7 @@ def get_logs_panel() -> Panel:
         color = "red" if log["level"] == "ERROR" else "yellow" if log["level"] == "WARNING" else "green"
         text += f"[{log['created_at']}] [{color}]{log['level']}[/{color}] - {log['action'][:55]}...\n"
 
-    return Panel(text or "No system decision logs recorded yet.", title="📝 Dynamic Decision & Event Logs", border_style="magenta")
+    return Panel(text or "[dim]No system decision logs recorded yet.[/dim]", title="📝 Dynamic Decision & Event Logs", border_style="magenta")
 
 def start_tui_loop():
     layout = make_layout()
