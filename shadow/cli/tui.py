@@ -69,7 +69,7 @@ def get_goals_table() -> Table:
 
     active_goals = goals_engine.get_active_goals()
     if not active_goals:
-        table.add_row("No goals tracked. Run 'shadow onboard' to define.", "", "", "")
+        table.add_row("[dim]No goals tracked. Run 'shadow onboard' to define.[/dim]", "", "", "")
         return table
 
     for g in active_goals[:5]:
@@ -82,8 +82,9 @@ def get_goals_table() -> Table:
 
         bar_filled = progress // 10
         progress_bar = "■" * bar_filled + "□" * (10 - bar_filled)
+        title = g["title"][:40] + "..." if len(g["title"]) > 40 else g["title"]
         table.add_row(
-            g["title"][:40],
+            title,
             g["category"] or "General",
             f"[{progress_bar}] {progress}%",
             g["status"].upper()
@@ -102,7 +103,8 @@ def get_opportunities_panel() -> Panel:
         text = "[dim]No new opportunities found yet. Active scanning running in background...[/dim]"
     else:
         for o in opps:
-            text += f"• [bold green]{o['title'][:50]}[/bold green] ({o['category']})\n  URL: {o['url'] or 'N/A'}\n"
+            title = o['title'][:50] + "..." if len(o['title']) > 50 else o['title']
+            text += f"• [bold green]{title}[/bold green] ({o['category']})\n  URL: {o['url'] or 'N/A'}\n"
 
     return Panel(text, title="🔍 Recent Opportunities Feed", border_style="green")
 
@@ -119,13 +121,14 @@ def get_planner_panel() -> Panel:
     cursor.execute("SELECT title FROM tasks WHERE status = 'pending' ORDER BY priority_score DESC LIMIT 1")
     top_task_row = cursor.fetchone()
     top_task = top_task_row["title"] if top_task_row else "All caught up!"
+    formatted_top_task = top_task[:50] + "..." if len(top_task) > 50 else top_task
 
     conn.close()
 
     text = (
         f"[bold white]Pending Priorities Count:[/bold white] {pending} tasks\n"
         f"[bold white]Completed Tasks Today:[/bold white] {completed} items\n"
-        f"[bold yellow]Next Recommended Focus:[/bold yellow]\n  ➡ [bold green]{top_task[:50]}[/bold green]"
+        f"[bold yellow]Next Recommended Focus:[/bold yellow]\n  ➡ [bold green]{formatted_top_task}[/bold green]"
     )
     return Panel(text, title="📅 Daily Planner & Focus", border_style="yellow")
 
@@ -172,9 +175,10 @@ def get_logs_panel() -> Panel:
     text = ""
     for log in logs:
         color = "red" if log["level"] == "ERROR" else "yellow" if log["level"] == "WARNING" else "green"
-        text += f"[{log['created_at']}] [{color}]{log['level']}[/{color}] - {log['action'][:55]}...\n"
+        action = log["action"][:55] + "..." if len(log["action"]) > 55 else log["action"]
+        text += f"[{log['created_at']}] [{color}]{log['level']}[/{color}] - {action}\n"
 
-    return Panel(text or "No system decision logs recorded yet.", title="📝 Dynamic Decision & Event Logs", border_style="magenta")
+    return Panel(text or "[dim]No system decision logs recorded yet.[/dim]", title="📝 Dynamic Decision & Event Logs", border_style="magenta")
 
 def start_tui_loop():
     layout = make_layout()
